@@ -8,7 +8,6 @@ and session management.
 
 import logging
 import queue
-import threading
 from collections.abc import Callable, Generator
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
@@ -17,8 +16,9 @@ from datetime import timedelta
 from typing import Any, cast
 
 import httpx
-from httpx_sse import EventSource, ServerSentEvent, connect_sse
+from httpx_sse import EventSource, ServerSentEvent
 
+from core.helper.ssrf_proxy import create_ssrf_proxy_mcp_http_client, ssrf_proxy_sse_connect
 from core.mcp.types import (
     ClientMessageMetadata,
     ErrorData,
@@ -30,7 +30,6 @@ from core.mcp.types import (
     RequestId,
     SessionMessage,
 )
-from core.mcp.utils import create_mcp_http_client
 
 logger = logging.getLogger(__name__)
 
@@ -49,6 +48,8 @@ ACCEPT = "Accept"
 
 JSON = "application/json"
 SSE = "text/event-stream"
+
+DEFAULT_QUEUE_READ_TIMEOUT = 3
 
 
 class StreamableHTTPError(Exception):
@@ -104,11 +105,6 @@ class StreamableHTTPTransport:
             CONTENT_TYPE: JSON,
             **self.headers,
         }
-        self.stop_event = threading.Event()
-
-    def stop(self):
-        """Signal to stop all operations."""
-        self.stop_event.set()
 
     def _update_headers_with_session(self, base_headers: dict[str, str]) -> dict[str, str]:
         """Update headers with session ID if available."""
@@ -168,6 +164,9 @@ class StreamableHTTPTransport:
                 # Put exception in queue that goes to client
                 server_to_client_queue.put(exc)
                 return False
+        elif sse.event == "ping":
+            logger.debug("Received ping event")
+            return False
         else:
             logger.warning(f"Unknown SSE event: {sse.event}")
             return False
@@ -184,19 +183,18 @@ class StreamableHTTPTransport:
 
             headers = self._update_headers_with_session(self.request_headers)
 
-            with connect_sse(
-                client,
-                "GET",
+            with ssrf_proxy_sse_connect(
                 self.url,
+                2,
                 headers=headers,
                 timeout=httpx.Timeout(self.timeout.seconds, read=self.sse_read_timeout.seconds),
+                client=client,
+                method="GET",
             ) as event_source:
                 event_source.response.raise_for_status()
                 logger.debug("GET SSE connection established")
 
                 for sse in event_source.iter_sse():
-                    if self.stop_event.is_set():
-                        break
                     self._handle_sse_event(sse, server_to_client_queue)
 
         except Exception as exc:
@@ -215,19 +213,18 @@ class StreamableHTTPTransport:
         if isinstance(ctx.session_message.message.root, JSONRPCRequest):
             original_request_id = ctx.session_message.message.root.id
 
-        with connect_sse(
-            ctx.client,
-            "GET",
+        with ssrf_proxy_sse_connect(
             self.url,
+            2,
             headers=headers,
             timeout=httpx.Timeout(self.timeout.seconds, read=ctx.sse_read_timeout.seconds),
+            client=ctx.client,
+            method="GET",
         ) as event_source:
             event_source.response.raise_for_status()
             logger.debug("Resumption GET SSE connection established")
 
             for sse in event_source.iter_sse():
-                if self.stop_event.is_set():
-                    break
                 is_complete = self._handle_sse_event(
                     sse,
                     ctx.server_to_client_queue,
@@ -296,15 +293,14 @@ class StreamableHTTPTransport:
         try:
             event_source = EventSource(response)
             for sse in event_source.iter_sse():
-                if self.stop_event.is_set():
-                    break
-                self._handle_sse_event(
+                is_complete = self._handle_sse_event(
                     sse,
                     ctx.server_to_client_queue,
                     resumption_callback=(ctx.metadata.on_resumption_token_update if ctx.metadata else None),
                 )
+                if is_complete:
+                    break
         except Exception as e:
-            logger.exception("Error reading SSE stream:")
             ctx.server_to_client_queue.put(e)
 
     def _handle_unexpected_content_type(
@@ -343,10 +339,10 @@ class StreamableHTTPTransport:
         This method processes messages from the client_to_server_queue and sends them to the server.
         Responses are written to the server_to_client_queue.
         """
-        while not self.stop_event.is_set():
+        while True:
             try:
                 # Read message from client queue with timeout to check stop_event periodically
-                session_message = client_to_server_queue.get(timeout=5)
+                session_message = client_to_server_queue.get(timeout=DEFAULT_QUEUE_READ_TIMEOUT)
                 if session_message is None:
                     break
 
@@ -379,10 +375,8 @@ class StreamableHTTPTransport:
                 else:
                     self._handle_post_request(ctx)
             except queue.Empty:
-                # Timeout - continue loop to check stop_event
                 continue
             except Exception as exc:
-                # Send exception to client
                 server_to_client_queue.put(exc)
 
     def terminate_session(self, client: httpx.Client) -> None:
@@ -444,7 +438,7 @@ def streamablehttp_client(
         try:
             logger.info(f"Connecting to StreamableHTTP endpoint: {url}")
 
-            with create_mcp_http_client(
+            with create_ssrf_proxy_mcp_http_client(
                 headers=transport.request_headers,
                 timeout=httpx.Timeout(transport.timeout.seconds, read=transport.sse_read_timeout.seconds),
             ) as client:
@@ -475,9 +469,6 @@ def streamablehttp_client(
                     # Signal threads to stop
                     client_to_server_queue.put(None)
         finally:
-            # Clean up
-            transport.stop()
-
             # Clear any remaining items and add None sentinel to unblock any waiting threads
             try:
                 while not client_to_server_queue.empty():
