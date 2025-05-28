@@ -96,7 +96,7 @@ class VariablePool(BaseModel):
 
         if isinstance(value, Variable):
             variable = value
-        elif isinstance(value, Segment):
+        if isinstance(value, Segment):
             variable = variable_factory.segment_to_variable(segment=value, selector=selector)
         else:
             segment = variable_factory.build_segment(value)
