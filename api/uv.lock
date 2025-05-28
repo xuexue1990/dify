@@ -1320,6 +1320,7 @@ dev = [
     { name = "types-gevent" },
     { name = "types-greenlet" },
     { name = "types-html5lib" },
+    { name = "types-jmespath" },
     { name = "types-jsonschema" },
     { name = "types-markdown" },
     { name = "types-oauthlib" },
@@ -1494,6 +1495,7 @@ dev = [
     { name = "types-gevent", specifier = "~=24.11.0" },
     { name = "types-greenlet", specifier = "~=3.1.0" },
     { name = "types-html5lib", specifier = "~=1.1.11" },
+    { name = "types-jmespath", specifier = ">=1.0.2.20240106" },
     { name = "types-jsonschema", specifier = "~=4.23.0" },
     { name = "types-markdown", specifier = "~=3.7.0" },
     { name = "types-oauthlib", specifier = "~=3.2.0" },
@@ -5769,6 +5771,15 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/d0/ed/9f092ff479e2b5598941855f314a22953bb04b5fb38bcba3f880feb833ba/types_html5lib-1.1.11.20250516.tar.gz", hash = "sha256:65043a6718c97f7d52567cc0cdf41efbfc33b1f92c6c0c5e19f60a7ec69ae720", size = 16136, upload_time = "2025-05-16T03:07:12.231Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/cc/3b/cb5b23c7b51bf48b8c9f175abb9dce2f1ecd2d2c25f92ea9f4e3720e9398/types_html5lib-1.1.11.20250516-py3-none-any.whl", hash = "sha256:5e407b14b1bd2b9b1107cbd1e2e19d4a0c46d60febd231c7ab7313d7405663c1", size = 21770, upload_time = "2025-05-16T03:07:11.102Z" },
+]
+
+[[package]]
+name = "types-jmespath"
+version = "1.0.2.20240106"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/1b/e4/1f7414dbca03975f66f1ab1b3f7b3deb7c19b104ef14dd3c99036bbc39b2/types-jmespath-1.0.2.20240106.tar.gz", hash = "sha256:b4a65a116bfc1c700a4fd9d24e2e397f4a431122e0320a77b7f1989a6b5d819e", size = 5071 }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/f5/30/3d6443f782601dd88820ba31e7668abfec7e19d685ac7f6fbcfd6ebba519/types_jmespath-1.0.2.20240106-py3-none-any.whl", hash = "sha256:c3e715fcaae9e5f8d74e14328fdedc4f2b3f0e18df17f3e457ae0a18e245bde0", size = 6087 },
 ]
 
 [[package]]

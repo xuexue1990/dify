@@ -2,7 +2,7 @@ import logging
 import time
 import uuid
 from collections.abc import Callable, Generator, Mapping, Sequence
-from typing import Any, Optional, TypeAlias, TypeVar, cast
+from typing import Any, Optional, TypeAlias, cast
 
 from configs import dify_config
 from core.app.apps.base_app_queue_manager import GenerateTaskStoppedError
@@ -22,7 +22,9 @@ from core.workflow.nodes import NodeType
 from core.workflow.nodes.base import BaseNode
 from core.workflow.nodes.event import NodeEvent, RunCompletedEvent
 from core.workflow.nodes.node_mapping import NODE_TYPE_CLASSES_MAPPING
+from core.workflow.variable_loader import DUMMY_VARIABLE_LOADER, VariableLoader, load_into_variable_pool
 from factories import file_factory
+from libs import gen_utils
 from models.enums import UserFrom
 from models.workflow import (
     Workflow,
@@ -121,7 +123,8 @@ class WorkflowEntry:
         node_id: str,
         user_id: str,
         user_inputs: dict,
-        conversation_variables: dict | None = None,
+        variable_pool: VariablePool,
+        variable_loader: VariableLoader = DUMMY_VARIABLE_LOADER,
     ) -> tuple[BaseNode, Generator[NodeEvent | InNodeEvent, None, None]]:
         """
         Single step run workflow node
@@ -131,34 +134,21 @@ class WorkflowEntry:
         :param user_inputs: user inputs
         :return:
         """
-        # fetch node info from workflow graph
-        workflow_graph = workflow.graph_dict
-        if not workflow_graph:
-            raise ValueError("workflow graph not found")
-
-        nodes = workflow_graph.get("nodes")
-        if not nodes:
-            raise ValueError("nodes not found in workflow graph")
-
-        # fetch node config from node id
-        try:
-            node_config = next(filter(lambda node: node["id"] == node_id, nodes))
-        except StopIteration:
-            raise ValueError("node id not found in workflow graph")
-
+        node_config = workflow.get_node_config_by_id(node_id)
         node_config_data = node_config.get("data", {})
 
         # Get node class
         node_type = NodeType(node_config_data.get("type"))
         node_version = node_config_data.get("version", "1")
+        if node_type == NodeType.START:
+            # special handing for start node.
+            #
+            # 1. create conversation variables and system variables
+            # 2. create environment variables
+            pass
+
         node_cls = NODE_TYPE_CLASSES_MAPPING[node_type][node_version]
         metadata_attacher = _attach_execution_metadata_based_on_node_config(node_config_data)
-
-        # init variable pool
-        variable_pool = VariablePool(
-            environment_variables=workflow.environment_variables,
-            conversation_variable=conversation_variables or {},
-        )
 
         # init graph
         graph = Graph.init(graph_config=workflow.graph_dict)
@@ -190,13 +180,21 @@ class WorkflowEntry:
         except NotImplementedError:
             variable_mapping = {}
 
+        # Loading missing variable from draft var here, and set it into
+        # variable_pool.
+        load_into_variable_pool(
+            variable_loader=variable_loader,
+            variable_pool=variable_pool,
+            variable_mapping=variable_mapping,
+            user_inputs=user_inputs,
+        )
+
         cls.mapping_user_inputs_to_variable_pool(
             variable_mapping=variable_mapping,
             user_inputs=user_inputs,
             variable_pool=variable_pool,
             tenant_id=workflow.tenant_id,
         )
-        cls._load_persisted_draft_var_and_populate_pool(app_id=workflow.app_id, variable_pool=variable_pool)
 
         try:
             # run node
@@ -204,7 +202,7 @@ class WorkflowEntry:
         except Exception as e:
             raise WorkflowNodeRunFailedError(node_instance=node_instance, error=str(e))
         if metadata_attacher:
-            generator = _wrap_generator(generator, metadata_attacher)
+            generator = gen_utils.map_(generator, metadata_attacher)
         return node_instance, generator
 
     @classmethod
@@ -332,16 +330,6 @@ class WorkflowEntry:
         return value
 
     @classmethod
-    def _load_persisted_draft_var_and_populate_pool(cls, app_id: str, variable_pool: VariablePool) -> None:
-        """
-        Load persisted draft variables and populate the variable pool.
-        :param app_id: The application ID.
-        :param variable_pool: The variable pool to populate.
-        """
-        # TODO(QuantumGhost):
-        pass
-
-    @classmethod
     def mapping_user_inputs_to_variable_pool(
         cls,
         *,
@@ -350,6 +338,13 @@ class WorkflowEntry:
         variable_pool: VariablePool,
         tenant_id: str,
     ) -> None:
+        # NOTE(QuantumGhost): This logic should remain synchronized with
+        # the implementation of `load_into_variable_pool`, specifically the logic about
+        # variable existence checking.
+
+        # WARNING(QuantumGhost): The semantics of this method are not clearly defined,
+        # and multiple parts of the codebase depend on its current behavior.
+        # Modify with caution.
         for node_variable, variable_selector in variable_mapping.items():
             # fetch node id and variable key from node_variable
             node_variable_list = node_variable.split(".")
@@ -389,18 +384,6 @@ class WorkflowEntry:
             # append variable and value to variable pool
             if variable_node_id != ENVIRONMENT_VARIABLE_NODE_ID:
                 variable_pool.add([variable_node_id] + variable_key_list, input_value)
-
-
-_YieldT_co = TypeVar("_YieldT_co", covariant=True)
-_YieldR_co = TypeVar("_YieldR_co", covariant=True)
-
-
-def _wrap_generator(
-    gen: Generator[_YieldT_co, None, None],
-    mapper: Callable[[_YieldT_co], _YieldR_co],
-) -> Generator[_YieldR_co, None, None]:
-    for item in gen:
-        yield mapper(item)
 
 
 _NodeOrInNodeEvent: TypeAlias = NodeEvent | InNodeEvent
