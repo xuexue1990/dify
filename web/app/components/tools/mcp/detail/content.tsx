@@ -86,7 +86,6 @@ const MCPDetailContent: FC<Props> = ({
       return
     const res = await authorizeMcp({
       provider_id: detail.id,
-      server_url: detail.server_url!,
     })
     if (res.result === 'success')
       handleUpdateTools()
@@ -194,7 +193,7 @@ const MCPDetailContent: FC<Props> = ({
             </div>
           </>
         )}
-        {detail.is_team_authorization && !isGettingTools && !toolList.length && (
+        {!isUpdating && detail.is_team_authorization && !isGettingTools && !toolList.length && (
           <div className='flex h-full w-full flex-col items-center justify-center'>
             <div className='system-sm-regular mb-3 text-text-tertiary'>{t('tools.mcp.toolsEmpty')}</div>
             <Button
@@ -203,7 +202,7 @@ const MCPDetailContent: FC<Props> = ({
             >{t('tools.mcp.getTools')}</Button>
           </div>
         )}
-        {!isGettingTools && toolList.length > 0 && (
+        {!isUpdating && !isGettingTools && toolList.length > 0 && (
           <>
             <div className='flex shrink-0 justify-between gap-2 px-4 pb-1 pt-2'>
               <div className='flex h-6 items-center'>
@@ -228,7 +227,7 @@ const MCPDetailContent: FC<Props> = ({
           </>
         )}
 
-        {!detail.is_team_authorization && (
+        {!isUpdating && !detail.is_team_authorization && (
           <div className='flex h-full w-full flex-col items-center justify-center'>
             {!isAuthorizing && <div className='system-md-medium mb-1 text-text-secondary'>{t('tools.mcp.authorizingRequired')}</div>}
             {isAuthorizing && <div className='system-md-medium mb-1 text-text-secondary'>{t('tools.mcp.authorizing')}</div>}
