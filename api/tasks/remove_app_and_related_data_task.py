@@ -4,20 +4,15 @@ from collections.abc import Callable
 
 import click
 from celery import shared_task  # type: ignore
-from sqlalchemy import delete, select
+from sqlalchemy import delete
 from sqlalchemy.exc import SQLAlchemyError
-from sqlalchemy.orm import Session
 
-from core.repositories import SQLAlchemyWorkflowNodeExecutionRepository
 from extensions.ext_database import db
 from models import (
-    Account,
     ApiToken,
-    App,
     AppAnnotationHitHistory,
     AppAnnotationSetting,
     AppDatasetJoin,
-    AppMCPServer,
     AppModelConfig,
     Conversation,
     EndUser,
@@ -35,7 +30,7 @@ from models import (
 )
 from models.tools import WorkflowToolProvider
 from models.web import PinnedConversation, SavedMessage
-from models.workflow import ConversationVariable, Workflow, WorkflowAppLog, WorkflowRun
+from models.workflow import ConversationVariable, Workflow, WorkflowAppLog, WorkflowNodeExecutionModel, WorkflowRun
 
 
 @shared_task(queue="app_deletion", bind=True, max_retries=3)
@@ -46,7 +41,6 @@ def remove_app_and_related_data_task(self, tenant_id: str, app_id: str):
         # Delete related data
         _delete_app_model_configs(tenant_id, app_id)
         _delete_app_site(tenant_id, app_id)
-        _delete_app_mcp_servers(tenant_id, app_id)
         _delete_app_api_tokens(tenant_id, app_id)
         _delete_installed_apps(tenant_id, app_id)
         _delete_recommended_apps(tenant_id, app_id)
@@ -93,18 +87,6 @@ def _delete_app_site(tenant_id: str, app_id: str):
         db.session.query(Site).filter(Site.id == site_id).delete(synchronize_session=False)
 
     _delete_records("""select id from sites where app_id=:app_id limit 1000""", {"app_id": app_id}, del_site, "site")
-
-
-def _delete_app_mcp_servers(tenant_id: str, app_id: str):
-    def del_mcp_server(mcp_server_id: str):
-        db.session.query(AppMCPServer).filter(AppMCPServer.id == mcp_server_id).delete(synchronize_session=False)
-
-    _delete_records(
-        """select id from app_mcp_servers where app_id=:app_id limit 1000""",
-        {"app_id": app_id},
-        del_mcp_server,
-        "app mcp server",
-    )
 
 
 def _delete_app_api_tokens(tenant_id: str, app_id: str):
@@ -205,30 +187,17 @@ def _delete_app_workflow_runs(tenant_id: str, app_id: str):
 
 
 def _delete_app_workflow_node_executions(tenant_id: str, app_id: str):
-    # Get app's owner
-    with Session(db.engine, expire_on_commit=False) as session:
-        stmt = select(Account).where(Account.id == App.created_by).where(App.id == app_id)
-        user = session.scalar(stmt)
+    def del_workflow_node_execution(workflow_node_execution_id: str):
+        db.session.query(WorkflowNodeExecutionModel).filter(
+            WorkflowNodeExecutionModel.id == workflow_node_execution_id
+        ).delete(synchronize_session=False)
 
-    if user is None:
-        errmsg = (
-            f"Failed to delete workflow node executions for tenant {tenant_id} and app {app_id}, app's owner not found"
-        )
-        logging.error(errmsg)
-        raise ValueError(errmsg)
-
-    # Create a repository instance for WorkflowNodeExecution
-    repository = SQLAlchemyWorkflowNodeExecutionRepository(
-        session_factory=db.engine,
-        user=user,
-        app_id=app_id,
-        triggered_from=None,
+    _delete_records(
+        """select id from workflow_node_executions where tenant_id=:tenant_id and app_id=:app_id limit 1000""",
+        {"tenant_id": tenant_id, "app_id": app_id},
+        del_workflow_node_execution,
+        "workflow node execution",
     )
-
-    # Use the clear method to delete all records for this tenant_id and app_id
-    repository.clear()
-
-    logging.info(click.style(f"Deleted workflow node executions for tenant {tenant_id} and app {app_id}", fg="green"))
 
 
 def _delete_app_workflow_app_logs(tenant_id: str, app_id: str):

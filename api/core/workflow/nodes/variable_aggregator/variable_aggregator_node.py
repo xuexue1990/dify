@@ -1,17 +1,13 @@
 from core.workflow.entities.node_entities import NodeRunResult
+from core.workflow.entities.workflow_node_execution import WorkflowNodeExecutionStatus
 from core.workflow.nodes.base import BaseNode
 from core.workflow.nodes.enums import NodeType
 from core.workflow.nodes.variable_aggregator.entities import VariableAssignerNodeData
-from models.workflow import WorkflowNodeExecutionStatus
 
 
 class VariableAggregatorNode(BaseNode[VariableAssignerNodeData]):
     _node_data_cls = VariableAssignerNodeData
     _node_type = NodeType.VARIABLE_AGGREGATOR
-
-    @classmethod
-    def version(cls) -> str:
-        return "1"
 
     def _run(self) -> NodeRunResult:
         # Get variables

@@ -6,6 +6,8 @@ from enum import Enum, StrEnum
 from typing import TYPE_CHECKING, Any, Optional, Union
 from uuid import uuid4
 
+from flask_login import current_user
+
 from core.variables import utils as variable_utils
 from core.workflow.constants import CONVERSATION_VARIABLE_NODE_ID, SYSTEM_VARIABLE_NODE_ID
 from factories.variable_factory import build_segment
@@ -17,7 +19,6 @@ import sqlalchemy as sa
 from sqlalchemy import UniqueConstraint, func
 from sqlalchemy.orm import Mapped, mapped_column
 
-import contexts
 from constants import DEFAULT_FILE_NUMBER_LIMITS, HIDDEN_VALUE
 from core.helper import encrypter
 from core.variables import SecretVariable, Segment, SegmentType, Variable
@@ -43,7 +44,6 @@ class WorkflowType(Enum):
 
     WORKFLOW = "workflow"
     CHAT = "chat"
-    RAG_PIPELINE = "rag_pipeline"
 
     @classmethod
     def value_of(cls, value: str) -> "WorkflowType":
@@ -135,11 +135,6 @@ class Workflow(Base):
     _conversation_variables: Mapped[str] = mapped_column(
         "conversation_variables", db.Text, nullable=False, server_default="{}"
     )
-    _rag_pipeline_variables: Mapped[str] = mapped_column(
-        "rag_pipeline_variables", db.Text, nullable=False, server_default="{}"
-    )
-
-    VERSION_DRAFT = "draft"
 
     @classmethod
     def new(
@@ -280,7 +275,16 @@ class Workflow(Base):
         if self._environment_variables is None:
             self._environment_variables = "{}"
 
-        tenant_id = contexts.tenant_id.get()
+        # Get tenant_id from current_user (Account or EndUser)
+        if isinstance(current_user, Account):
+            # Account user
+            tenant_id = current_user.current_tenant_id
+        else:
+            # EndUser
+            tenant_id = current_user.tenant_id
+
+        if not tenant_id:
+            return []
 
         environment_variables_dict: dict[str, Any] = json.loads(self._environment_variables)
         results = [
@@ -303,7 +307,17 @@ class Workflow(Base):
             self._environment_variables = "{}"
             return
 
-        tenant_id = contexts.tenant_id.get()
+        # Get tenant_id from current_user (Account or EndUser)
+        if isinstance(current_user, Account):
+            # Account user
+            tenant_id = current_user.current_tenant_id
+        else:
+            # EndUser
+            tenant_id = current_user.tenant_id
+
+        if not tenant_id:
+            self._environment_variables = "{}"
+            return
 
         value = list(value)
         if any(var for var in value if not var.id):
@@ -342,7 +356,6 @@ class Workflow(Base):
             "features": self.features_dict,
             "environment_variables": [var.model_dump(mode="json") for var in environment_variables],
             "conversation_variables": [var.model_dump(mode="json") for var in self.conversation_variables],
-            "rag_pipeline_variables": [var.model_dump(mode="json") for var in self.rag_pipeline_variables],
         }
         return result
 
@@ -362,39 +375,6 @@ class Workflow(Base):
             {var.name: var.model_dump() for var in value},
             ensure_ascii=False,
         )
-
-    @property
-    def rag_pipeline_variables(self) -> Sequence[Variable]:
-        # TODO: find some way to init `self._conversation_variables` when instance created.
-        if self._rag_pipeline_variables is None:
-            self._rag_pipeline_variables = "{}"
-
-        variables_dict: dict[str, Any] = json.loads(self._rag_pipeline_variables)
-        results = list(variables_dict.values())
-        return results
-
-    @rag_pipeline_variables.setter
-    def rag_pipeline_variables(self, values: list[dict]) -> None:
-        self._rag_pipeline_variables = json.dumps(
-            {item["variable"]: item for item in values},
-            ensure_ascii=False,
-        )
-
-    @staticmethod
-    def version_from_datetime(d: datetime) -> str:
-        return str(d)
-
-
-class WorkflowRunStatus(StrEnum):
-    """
-    Workflow Run Status Enum
-    """
-
-    RUNNING = "running"
-    SUCCEEDED = "succeeded"
-    FAILED = "failed"
-    STOPPED = "stopped"
-    PARTIAL_SUCCEEDED = "partial-succeeded"
 
 
 class WorkflowRun(Base):
@@ -457,12 +437,12 @@ class WorkflowRun(Base):
     error: Mapped[Optional[str]] = mapped_column(db.Text)
     elapsed_time: Mapped[float] = mapped_column(db.Float, nullable=False, server_default=sa.text("0"))
     total_tokens: Mapped[int] = mapped_column(sa.BigInteger, server_default=sa.text("0"))
-    total_steps: Mapped[int] = mapped_column(db.Integer, server_default=db.text("0"))
+    total_steps: Mapped[int] = mapped_column(db.Integer, server_default=db.text("0"), nullable=True)
     created_by_role: Mapped[str] = mapped_column(db.String(255))  # account, end_user
     created_by: Mapped[str] = mapped_column(StringUUID, nullable=False)
     created_at: Mapped[datetime] = mapped_column(db.DateTime, nullable=False, server_default=func.current_timestamp())
     finished_at: Mapped[Optional[datetime]] = mapped_column(db.DateTime)
-    exceptions_count: Mapped[int] = mapped_column(db.Integer, server_default=db.text("0"))
+    exceptions_count: Mapped[int] = mapped_column(db.Integer, server_default=db.text("0"), nullable=True)
 
     @property
     def created_by_account(self):
@@ -561,19 +541,7 @@ class WorkflowNodeExecutionTriggeredFrom(StrEnum):
     WORKFLOW_RUN = "workflow-run"
 
 
-class WorkflowNodeExecutionStatus(StrEnum):
-    """
-    Workflow Node Execution Status Enum
-    """
-
-    RUNNING = "running"
-    SUCCEEDED = "succeeded"
-    FAILED = "failed"
-    EXCEPTION = "exception"
-    RETRY = "retry"
-
-
-class WorkflowNodeExecution(Base):
+class WorkflowNodeExecutionModel(Base):
     """
     Workflow Node Execution
 
@@ -851,7 +819,7 @@ def _naive_utc_datetime():
 
 class WorkflowDraftVariable(Base):
     @staticmethod
-    def unique_app_id_node_id_name() -> list[str]:
+    def unique_columns() -> list[str]:
         return [
             "app_id",
             "node_id",
@@ -859,7 +827,7 @@ class WorkflowDraftVariable(Base):
         ]
 
     __tablename__ = "workflow_draft_variables"
-    __table_args__ = (UniqueConstraint(*unique_app_id_node_id_name()),)
+    __table_args__ = (UniqueConstraint(*unique_columns()),)
 
     # id is the unique identifier of a draft variable.
     id: Mapped[str] = mapped_column(StringUUID, primary_key=True, server_default=db.text("uuid_generate_v4()"))
@@ -1024,11 +992,10 @@ class WorkflowDraftVariable(Base):
         name: str,
         value: Segment,
         visible: bool = True,
-        editable: bool = True,
     ) -> "WorkflowDraftVariable":
         variable = cls._new(app_id=app_id, node_id=node_id, name=name, value=value)
         variable.visible = visible
-        variable.editable = editable
+        variable.editable = True
         return variable
 
     @property

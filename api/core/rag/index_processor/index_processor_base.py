@@ -1,8 +1,7 @@
 """Abstract interface for document loader implementations."""
 
 from abc import ABC, abstractmethod
-from collections.abc import Mapping
-from typing import Any, Optional
+from typing import Optional
 
 from configs import dify_config
 from core.model_manager import ModelInstance
@@ -32,10 +31,6 @@ class BaseIndexProcessor(ABC):
         raise NotImplementedError
 
     def clean(self, dataset: Dataset, node_ids: Optional[list[str]], with_keywords: bool = True, **kwargs):
-        raise NotImplementedError
-
-    @abstractmethod
-    def index(self, dataset: Dataset, document: Document, chunks: Mapping[str, Any]):
         raise NotImplementedError
 
     @abstractmethod

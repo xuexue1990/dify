@@ -110,6 +110,7 @@ class WebAppAuthService:
         payload = {
             "sub": "Web API Passport",
             "user_id": account.id,
+            "session_id": account.email,
             "token_source": "webapp_login_token",
             "exp": exp,
         }

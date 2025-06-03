@@ -49,7 +49,6 @@ class ToolProviderType(enum.StrEnum):
     API = "api"
     APP = "app"
     DATASET_RETRIEVAL = "dataset-retrieval"
-    MCP = "mcp"
 
     @classmethod
     def value_of(cls, value: str) -> "ToolProviderType":
@@ -280,7 +279,6 @@ class ToolParameter(PluginParameter):
         :param options: the options of the parameter
         """
         # convert options to ToolParameterOption
-        # FIXME fix the type error
         if options:
             option_objs = [
                 PluginParameterOption(value=option, label=I18nObject(en_US=option, zh_Hans=option))

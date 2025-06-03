@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING, Any, Literal, Optional, cast
 from core.plugin.entities.plugin import GenericProviderID
 from core.tools.entities.tool_entities import ToolProviderType
 from core.tools.signature import sign_tool_file
+from core.workflow.entities.workflow_execution import WorkflowExecutionStatus
 from services.plugin.plugin_service import PluginService
 
 if TYPE_CHECKING:
@@ -31,7 +32,6 @@ from .base import Base
 from .engine import db
 from .enums import CreatorUserRole
 from .types import StringUUID
-from .workflow import WorkflowRunStatus
 
 if TYPE_CHECKING:
     from .workflow import Workflow
@@ -295,8 +295,13 @@ class App(Base):
         return tags or []
 
     @property
-    def mcp_server(self):
-        return db.session.query(AppMCPServer).filter(AppMCPServer.app_id == self.id).first()
+    def author_name(self):
+        if self.created_by:
+            account = db.session.query(Account).filter(Account.id == self.created_by).first()
+            if account:
+                return account.name
+
+        return None
 
 
 class AppModelConfig(Base):
@@ -606,14 +611,6 @@ class InstalledApp(Base):
         return tenant
 
 
-class ConversationSource(StrEnum):
-    """This enumeration is designed for use with `Conversation.from_source`."""
-
-    # NOTE(QuantumGhost): The enumeration members may not cover all possible cases.
-    API = "api"
-    CONSOLE = "console"
-
-
 class Conversation(Base):
     __tablename__ = "conversations"
     __table_args__ = (
@@ -635,14 +632,7 @@ class Conversation(Base):
     system_instruction = db.Column(db.Text)
     system_instruction_tokens = db.Column(db.Integer, nullable=False, server_default=db.text("0"))
     status = db.Column(db.String(255), nullable=False)
-
-    # The `invoke_from` records how the conversation is created.
-    #
-    # Its value corresponds to the members of `InvokeFrom`.
-    # (api/core/app/entities/app_invoke_entities.py)
     invoke_from = db.Column(db.String(255), nullable=True)
-
-    # ref: ConversationSource.
     from_source = db.Column(db.String(255), nullable=False)
     from_end_user_id = db.Column(StringUUID)
     from_account_id = db.Column(StringUUID)
@@ -804,22 +794,22 @@ class Conversation(Base):
     def status_count(self):
         messages = db.session.query(Message).filter(Message.conversation_id == self.id).all()
         status_counts = {
-            WorkflowRunStatus.RUNNING: 0,
-            WorkflowRunStatus.SUCCEEDED: 0,
-            WorkflowRunStatus.FAILED: 0,
-            WorkflowRunStatus.STOPPED: 0,
-            WorkflowRunStatus.PARTIAL_SUCCEEDED: 0,
+            WorkflowExecutionStatus.RUNNING: 0,
+            WorkflowExecutionStatus.SUCCEEDED: 0,
+            WorkflowExecutionStatus.FAILED: 0,
+            WorkflowExecutionStatus.STOPPED: 0,
+            WorkflowExecutionStatus.PARTIAL_SUCCEEDED: 0,
         }
 
         for message in messages:
             if message.workflow_run:
-                status_counts[WorkflowRunStatus(message.workflow_run.status)] += 1
+                status_counts[WorkflowExecutionStatus(message.workflow_run.status)] += 1
 
         return (
             {
-                "success": status_counts[WorkflowRunStatus.SUCCEEDED],
-                "failed": status_counts[WorkflowRunStatus.FAILED],
-                "partial_success": status_counts[WorkflowRunStatus.PARTIAL_SUCCEEDED],
+                "success": status_counts[WorkflowExecutionStatus.SUCCEEDED],
+                "failed": status_counts[WorkflowExecutionStatus.FAILED],
+                "partial_success": status_counts[WorkflowExecutionStatus.PARTIAL_SUCCEEDED],
             }
             if messages
             else None
@@ -1445,31 +1435,6 @@ class EndUser(Base, UserMixin):
     session_id: Mapped[str] = mapped_column()
     created_at = db.Column(db.DateTime, nullable=False, server_default=func.current_timestamp())
     updated_at = db.Column(db.DateTime, nullable=False, server_default=func.current_timestamp())
-
-
-class AppMCPServer(Base):
-    __tablename__ = "app_mcp_servers"
-    __table_args__ = (db.PrimaryKeyConstraint("id", name="app_mcp_server_pkey"),)
-    id = db.Column(StringUUID, server_default=db.text("uuid_generate_v4()"))
-    tenant_id = db.Column(StringUUID, nullable=False)
-    app_id = db.Column(StringUUID, nullable=False)
-    name = db.Column(db.String(255), nullable=False)
-    description = db.Column(db.String(255), nullable=False)
-    server_code = db.Column(db.String(255), nullable=False)
-    status = db.Column(db.String(255), nullable=False, server_default=db.text("'normal'::character varying"))
-    parameters = db.Column(db.Text, nullable=False)
-
-    created_at = db.Column(db.DateTime, nullable=False, server_default=func.current_timestamp())
-    updated_at = db.Column(db.DateTime, nullable=False, server_default=func.current_timestamp())
-
-    @staticmethod
-    def generate_server_code(n):
-        while True:
-            result = generate_string(n)
-            while db.session.query(AppMCPServer).filter(AppMCPServer.server_code == result).count() > 0:
-                result = generate_string(n)
-
-            return result
 
 
 class Site(Base):

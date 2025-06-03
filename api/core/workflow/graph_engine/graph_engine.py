@@ -9,13 +9,14 @@ from copy import copy, deepcopy
 from datetime import UTC, datetime
 from typing import Any, Optional, cast
 
-from flask import Flask, current_app
+from flask import Flask, current_app, has_request_context
 
 from configs import dify_config
 from core.app.apps.base_app_queue_manager import GenerateTaskStoppedError
 from core.app.entities.app_invoke_entities import InvokeFrom
-from core.workflow.entities.node_entities import AgentNodeStrategyInit, NodeRunMetadataKey, NodeRunResult
+from core.workflow.entities.node_entities import AgentNodeStrategyInit, NodeRunResult
 from core.workflow.entities.variable_pool import VariablePool, VariableValue
+from core.workflow.entities.workflow_node_execution import WorkflowNodeExecutionMetadataKey, WorkflowNodeExecutionStatus
 from core.workflow.graph_engine.condition_handlers.condition_manager import ConditionManager
 from core.workflow.graph_engine.entities.event import (
     BaseAgentEvent,
@@ -52,9 +53,8 @@ from core.workflow.nodes.end.end_stream_processor import EndStreamProcessor
 from core.workflow.nodes.enums import ErrorStrategy, FailBranchSourceHandle
 from core.workflow.nodes.event import RunCompletedEvent, RunRetrieverResourceEvent, RunStreamChunkEvent
 from core.workflow.nodes.node_mapping import NODE_TYPE_CLASSES_MAPPING
-from extensions.ext_database import db
 from models.enums import UserFrom
-from models.workflow import WorkflowNodeExecutionStatus, WorkflowType
+from models.workflow import WorkflowType
 
 logger = logging.getLogger(__name__)
 
@@ -313,7 +313,6 @@ class GraphEngine:
                     parallel_start_node_id=parallel_start_node_id,
                     parent_parallel_id=parent_parallel_id,
                     parent_parallel_start_node_id=parent_parallel_start_node_id,
-                    node_version=node_instance.version(),
                 )
                 raise e
 
@@ -541,8 +540,21 @@ class GraphEngine:
         for var, val in context.items():
             var.set(val)
 
+        # FIXME(-LAN-): Save current user before entering new app context
+        from flask import g
+
+        saved_user = None
+        if has_request_context() and hasattr(g, "_login_user"):
+            saved_user = g._login_user
+
         with flask_app.app_context():
             try:
+                # Restore user in new app context
+                if saved_user is not None:
+                    from flask import g
+
+                    g._login_user = saved_user
+
                 q.put(
                     ParallelBranchRunStartedEvent(
                         parallel_id=parallel_id,
@@ -594,8 +606,6 @@ class GraphEngine:
                         error=str(e),
                     )
                 )
-            finally:
-                db.session.remove()
 
     def _run_node(
         self,
@@ -631,10 +641,8 @@ class GraphEngine:
             parent_parallel_id=parent_parallel_id,
             parent_parallel_start_node_id=parent_parallel_start_node_id,
             agent_strategy=agent_strategy,
-            node_version=node_instance.version(),
         )
 
-        db.session.close()
         max_retries = node_instance.node_data.retry_config.max_retries
         retry_interval = node_instance.node_data.retry_config.retry_interval_seconds
         retries = 0
@@ -690,7 +698,6 @@ class GraphEngine:
                                         error=run_result.error or "Unknown error",
                                         retry_index=retries,
                                         start_at=retry_start_at,
-                                        node_version=node_instance.version(),
                                     )
                                     time.sleep(retry_interval)
                                     break
@@ -726,7 +733,6 @@ class GraphEngine:
                                         parallel_start_node_id=parallel_start_node_id,
                                         parent_parallel_id=parent_parallel_id,
                                         parent_parallel_start_node_id=parent_parallel_start_node_id,
-                                        node_version=node_instance.version(),
                                     )
                                     should_continue_retry = False
                                 else:
@@ -741,7 +747,6 @@ class GraphEngine:
                                         parallel_start_node_id=parallel_start_node_id,
                                         parent_parallel_id=parent_parallel_id,
                                         parent_parallel_start_node_id=parent_parallel_start_node_id,
-                                        node_version=node_instance.version(),
                                     )
                                 should_continue_retry = False
                             elif run_result.status == WorkflowNodeExecutionStatus.SUCCEEDED:
@@ -751,10 +756,12 @@ class GraphEngine:
                                     and node_instance.node_data.error_strategy is ErrorStrategy.FAIL_BRANCH
                                 ):
                                     run_result.edge_source_handle = FailBranchSourceHandle.SUCCESS
-                                if run_result.metadata and run_result.metadata.get(NodeRunMetadataKey.TOTAL_TOKENS):
+                                if run_result.metadata and run_result.metadata.get(
+                                    WorkflowNodeExecutionMetadataKey.TOTAL_TOKENS
+                                ):
                                     # plus state total_tokens
                                     self.graph_runtime_state.total_tokens += int(
-                                        run_result.metadata.get(NodeRunMetadataKey.TOTAL_TOKENS)  # type: ignore[arg-type]
+                                        run_result.metadata.get(WorkflowNodeExecutionMetadataKey.TOTAL_TOKENS)  # type: ignore[arg-type]
                                     )
 
                                 if run_result.llm_usage:
@@ -777,13 +784,17 @@ class GraphEngine:
 
                                 if parallel_id and parallel_start_node_id:
                                     metadata_dict = dict(run_result.metadata)
-                                    metadata_dict[NodeRunMetadataKey.PARALLEL_ID] = parallel_id
-                                    metadata_dict[NodeRunMetadataKey.PARALLEL_START_NODE_ID] = parallel_start_node_id
+                                    metadata_dict[WorkflowNodeExecutionMetadataKey.PARALLEL_ID] = parallel_id
+                                    metadata_dict[WorkflowNodeExecutionMetadataKey.PARALLEL_START_NODE_ID] = (
+                                        parallel_start_node_id
+                                    )
                                     if parent_parallel_id and parent_parallel_start_node_id:
-                                        metadata_dict[NodeRunMetadataKey.PARENT_PARALLEL_ID] = parent_parallel_id
-                                        metadata_dict[NodeRunMetadataKey.PARENT_PARALLEL_START_NODE_ID] = (
-                                            parent_parallel_start_node_id
+                                        metadata_dict[WorkflowNodeExecutionMetadataKey.PARENT_PARALLEL_ID] = (
+                                            parent_parallel_id
                                         )
+                                        metadata_dict[
+                                            WorkflowNodeExecutionMetadataKey.PARENT_PARALLEL_START_NODE_ID
+                                        ] = parent_parallel_start_node_id
                                     run_result.metadata = metadata_dict
 
                                 yield NodeRunSucceededEvent(
@@ -796,7 +807,6 @@ class GraphEngine:
                                     parallel_start_node_id=parallel_start_node_id,
                                     parent_parallel_id=parent_parallel_id,
                                     parent_parallel_start_node_id=parent_parallel_start_node_id,
-                                    node_version=node_instance.version(),
                                 )
                                 should_continue_retry = False
 
@@ -814,7 +824,6 @@ class GraphEngine:
                                 parallel_start_node_id=parallel_start_node_id,
                                 parent_parallel_id=parent_parallel_id,
                                 parent_parallel_start_node_id=parent_parallel_start_node_id,
-                                node_version=node_instance.version(),
                             )
                         elif isinstance(item, RunRetrieverResourceEvent):
                             yield NodeRunRetrieverResourceEvent(
@@ -829,7 +838,6 @@ class GraphEngine:
                                 parallel_start_node_id=parallel_start_node_id,
                                 parent_parallel_id=parent_parallel_id,
                                 parent_parallel_start_node_id=parent_parallel_start_node_id,
-                                node_version=node_instance.version(),
                             )
             except GenerateTaskStoppedError:
                 # trigger node run failed event
@@ -846,14 +854,11 @@ class GraphEngine:
                     parallel_start_node_id=parallel_start_node_id,
                     parent_parallel_id=parent_parallel_id,
                     parent_parallel_start_node_id=parent_parallel_start_node_id,
-                    node_version=node_instance.version(),
                 )
                 return
             except Exception as e:
                 logger.exception(f"Node {node_instance.node_data.title} run failed")
                 raise e
-            finally:
-                db.session.close()
 
     def _append_variables_recursively(self, node_id: str, variable_key_list: list[str], variable_value: VariableValue):
         """
@@ -919,7 +924,7 @@ class GraphEngine:
             "error": error_result.error,
             "inputs": error_result.inputs,
             "metadata": {
-                NodeRunMetadataKey.ERROR_STRATEGY: node_instance.node_data.error_strategy,
+                WorkflowNodeExecutionMetadataKey.ERROR_STRATEGY: node_instance.node_data.error_strategy,
             },
         }
 

@@ -1,24 +1,26 @@
 import base64
 import secrets
 
-from controllers.console.auth.error import (EmailCodeError,
-                                            EmailPasswordResetLimitError,
-                                            InvalidEmailError,
-                                            InvalidTokenError,
-                                            PasswordMismatchError)
-from controllers.console.error import AccountNotFound, EmailSendIpLimitError
-from controllers.console.wraps import (email_password_login_enabled,
-                                       only_edition_enterprise, setup_required)
-from controllers.web import api
-from extensions.ext_database import db
 from flask import request
 from flask_restful import Resource, reqparse
+from sqlalchemy import select
+from sqlalchemy.orm import Session
+
+from controllers.console.auth.error import (
+    EmailCodeError,
+    EmailPasswordResetLimitError,
+    InvalidEmailError,
+    InvalidTokenError,
+    PasswordMismatchError,
+)
+from controllers.console.error import AccountNotFound, EmailSendIpLimitError
+from controllers.console.wraps import email_password_login_enabled, only_edition_enterprise, setup_required
+from controllers.web import api
+from extensions.ext_database import db
 from libs.helper import email, extract_remote_ip
 from libs.password import hash_password, valid_password
 from models.account import Account
 from services.account_service import AccountService
-from sqlalchemy import select
-from sqlalchemy.orm import Session
 
 
 class ForgotPasswordSendEmailApi(Resource):

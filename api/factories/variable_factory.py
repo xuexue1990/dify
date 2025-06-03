@@ -36,10 +36,7 @@ from core.variables.variables import (
     StringVariable,
     Variable,
 )
-from core.workflow.constants import (
-    CONVERSATION_VARIABLE_NODE_ID,
-    ENVIRONMENT_VARIABLE_NODE_ID,
-)
+from core.workflow.constants import CONVERSATION_VARIABLE_NODE_ID, ENVIRONMENT_VARIABLE_NODE_ID
 
 
 class InvalidSelectorError(ValueError):
@@ -78,12 +75,6 @@ def build_environment_variable_from_mapping(mapping: Mapping[str, Any], /) -> Va
     return _build_variable_from_mapping(mapping=mapping, selector=[ENVIRONMENT_VARIABLE_NODE_ID, mapping["name"]])
 
 
-def build_pipeline_variable_from_mapping(mapping: Mapping[str, Any], /) -> Variable:
-    if not mapping.get("variable"):
-        raise VariableError("missing variable")
-    return mapping["variable"]
-
-
 def _build_variable_from_mapping(*, mapping: Mapping[str, Any], selector: Sequence[str]) -> Variable:
     """
     This factory function is used to create the environment variable or the conversation variable,
@@ -93,8 +84,8 @@ def _build_variable_from_mapping(*, mapping: Mapping[str, Any], selector: Sequen
         raise VariableError("missing value type")
     if (value := mapping.get("value")) is None:
         raise VariableError("missing value")
-    # FIXME: using Any here, fix it later
-    result: Any
+
+    result: Variable
     match value_type:
         case SegmentType.STRING:
             result = StringVariable.model_validate(mapping)
@@ -121,10 +112,6 @@ def _build_variable_from_mapping(*, mapping: Mapping[str, Any], selector: Sequen
     if not result.selector:
         result = result.model_copy(update={"selector": selector})
     return cast(Variable, result)
-
-
-def infer_segment_type_from_value(value: Any, /) -> SegmentType:
-    return build_segment(value).value_type
 
 
 def build_segment(value: Any, /) -> Segment:

@@ -35,31 +35,6 @@ class Document(BaseModel):
     children: Optional[list[ChildDocument]] = None
 
 
-class GeneralStructureChunk(BaseModel):
-    """
-    General Structure Chunk.
-    """
-
-    general_chunk: list[str]
-
-
-class ParentChildChunk(BaseModel):
-    """
-    Parent Child Chunk.
-    """
-
-    parent_content: str
-    child_contents: list[str]
-
-
-class ParentChildStructureChunk(BaseModel):
-    """
-    Parent Child Structure Chunk.
-    """
-
-    parent_child_chunks: list[ParentChildChunk]
-
-
 class BaseDocumentTransformer(ABC):
     """Abstract base class for document transformation systems.
 
@@ -70,12 +45,11 @@ class BaseDocumentTransformer(ABC):
         .. code-block:: python
 
             class EmbeddingsRedundantFilter(BaseDocumentTransformer, BaseModel):
+                model_config = ConfigDict(arbitrary_types_allowed=True)
+
                 embeddings: Embeddings
                 similarity_fn: Callable = cosine_similarity
                 similarity_threshold: float = 0.95
-
-                class Config:
-                    arbitrary_types_allowed = True
 
                 def transform_documents(
                     self, documents: Sequence[Document], **kwargs: Any

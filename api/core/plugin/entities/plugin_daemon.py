@@ -6,11 +6,10 @@ from typing import Any, Generic, Optional, TypeVar
 from pydantic import BaseModel, ConfigDict, Field
 
 from core.agent.plugin_entities import AgentProviderEntityWithPlugin
-from core.datasource.entities.datasource_entities import DatasourceProviderEntityWithPlugin
 from core.model_runtime.entities.model_entities import AIModelEntity
 from core.model_runtime.entities.provider_entities import ProviderEntity
 from core.plugin.entities.base import BasePluginEntity
-from core.plugin.entities.plugin import PluginDeclaration
+from core.plugin.entities.plugin import PluginDeclaration, PluginEntity
 from core.tools.entities.common_entities import I18nObject
 from core.tools.entities.tool_entities import ToolProviderEntityWithPlugin
 
@@ -46,13 +45,6 @@ class PluginToolProviderEntity(BaseModel):
     plugin_unique_identifier: str
     plugin_id: str
     declaration: ToolProviderEntityWithPlugin
-
-
-class PluginDatasourceProviderEntity(BaseModel):
-    provider: str
-    plugin_unique_identifier: str
-    plugin_id: str
-    declaration: DatasourceProviderEntityWithPlugin
 
 
 class PluginAgentProviderEntity(BaseModel):
@@ -175,3 +167,8 @@ class PluginOAuthAuthorizationUrlResponse(BaseModel):
 
 class PluginOAuthCredentialsResponse(BaseModel):
     credentials: Mapping[str, Any] = Field(description="The credentials of the OAuth.")
+
+
+class PluginListResponse(BaseModel):
+    list: list[PluginEntity]
+    total: int

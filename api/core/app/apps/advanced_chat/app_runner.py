@@ -48,9 +48,6 @@ class AdvancedChatAppRunner(WorkflowBasedAppRunner):
         self.message = message
         self._dialogue_count = dialogue_count
 
-    def _get_app_id(self) -> str:
-        return self.application_generate_entity.app_config.app_id
-
     def run(self) -> None:
         app_config = self.application_generate_entity.app_config
         app_config = cast(AdvancedChatAppConfig, app_config)
@@ -143,7 +140,7 @@ class AdvancedChatAppRunner(WorkflowBasedAppRunner):
                 SystemVariableKey.DIALOGUE_COUNT: self._dialogue_count,
                 SystemVariableKey.APP_ID: app_config.app_id,
                 SystemVariableKey.WORKFLOW_ID: app_config.workflow_id,
-                SystemVariableKey.WORKFLOW_RUN_ID: self.application_generate_entity.workflow_run_id,
+                SystemVariableKey.WORKFLOW_EXECUTION_ID: self.application_generate_entity.workflow_run_id,
             }
 
             # init variable pool

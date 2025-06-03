@@ -1,9 +1,7 @@
 import json
-import logging
 import time
 from collections.abc import Callable, Generator, Sequence
 from datetime import UTC, datetime
-from inspect import isgenerator
 from typing import Any, Optional
 from uuid import uuid4
 
@@ -12,11 +10,10 @@ from sqlalchemy.orm import Session
 
 from core.app.apps.advanced_chat.app_config_manager import AdvancedChatAppConfigManager
 from core.app.apps.workflow.app_config_manager import WorkflowAppConfigManager
-from core.app.entities.app_invoke_entities import InvokeFrom
 from core.repositories import SQLAlchemyWorkflowNodeExecutionRepository
 from core.variables import Variable
-from core.workflow.entities.node_entities import NodeRunMetadataKey, NodeRunResult
-from core.workflow.entities.node_execution_entities import NodeExecution, NodeExecutionStatus
+from core.workflow.entities.node_entities import NodeRunResult
+from core.workflow.entities.workflow_node_execution import WorkflowNodeExecution, WorkflowNodeExecutionStatus
 from core.workflow.errors import WorkflowNodeRunFailedError
 from core.workflow.graph_engine.entities.event import InNodeEvent
 from core.workflow.nodes import NodeType
@@ -33,49 +30,20 @@ from models.model import App, AppMode
 from models.tools import WorkflowToolProvider
 from models.workflow import (
     Workflow,
-    WorkflowNodeExecution,
-    WorkflowNodeExecutionStatus,
+    WorkflowNodeExecutionModel,
     WorkflowNodeExecutionTriggeredFrom,
     WorkflowType,
 )
-from services.errors.app import IsDraftWorkflowError, WorkflowHashNotEqualError
+from services.errors.app import WorkflowHashNotEqualError
 from services.workflow.workflow_converter import WorkflowConverter
 
 from .errors.workflow_service import DraftWorkflowDeletionError, WorkflowInUseError
-from .workflow_draft_variable_service import WorkflowDraftVariableService, should_save_output_variables_for_draft
 
 
 class WorkflowService:
     """
     Workflow Service
     """
-
-    def get_node_last_run(self, app_model: App, workflow: Workflow, node_id: str) -> WorkflowNodeExecution | None:
-        # TODO(QuantumGhost): This query is not fully covered by index.
-        criteria = (
-            WorkflowNodeExecution.tenant_id == app_model.tenant_id,
-            WorkflowNodeExecution.app_id == app_model.id,
-            WorkflowNodeExecution.workflow_id == workflow.id,
-            WorkflowNodeExecution.node_id == node_id,
-        )
-        node_exec = (
-            db.session.query(WorkflowNodeExecution)
-            .filter(*criteria)
-            .order_by(WorkflowNodeExecution.created_at.desc())
-            .first()
-        )
-        return node_exec
-
-    def is_workflow_exist(self, app_model: App) -> bool:
-        return (
-            db.session.query(Workflow)
-            .filter(
-                Workflow.tenant_id == app_model.tenant_id,
-                Workflow.app_id == app_model.id,
-                Workflow.version == Workflow.VERSION_DRAFT,
-            )
-            .count()
-        ) > 0
 
     def get_draft_workflow(self, app_model: App) -> Optional[Workflow]:
         """
@@ -91,21 +59,6 @@ class WorkflowService:
         )
 
         # return draft workflow
-        return workflow
-
-    def get_published_workflow_by_id(self, app_model: App, workflow_id: str) -> Optional[Workflow]:
-        # fetch published workflow by workflow_id
-        workflow = (
-            db.session.query(Workflow)
-            .filter(
-                Workflow.tenant_id == app_model.tenant_id,
-                Workflow.app_id == app_model.id,
-                Workflow.id == workflow_id,
-            )
-            .first()
-        )
-        if workflow.version == Workflow.VERSION_DRAFT:
-            raise IsDraftWorkflowError(f"Workflow is draft version, id={workflow_id}")
         return workflow
 
     def get_published_workflow(self, app_model: App) -> Optional[Workflow]:
@@ -246,8 +199,9 @@ class WorkflowService:
             tenant_id=app_model.tenant_id,
             app_id=app_model.id,
             type=draft_workflow.type,
-            version=Workflow.version_from_datetime(datetime.now(UTC).replace(tzinfo=None)),
+            version=str(datetime.now(UTC).replace(tzinfo=None)),
             graph=draft_workflow.graph,
+            features=draft_workflow.features,
             created_by=account.id,
             environment_variables=draft_workflow.environment_variables,
             conversation_variables=draft_workflow.conversation_variables,
@@ -300,7 +254,7 @@ class WorkflowService:
 
     def run_draft_workflow_node(
         self, app_model: App, node_id: str, user_inputs: dict, account: Account
-    ) -> WorkflowNodeExecution:
+    ) -> WorkflowNodeExecutionModel:
         """
         Run draft workflow node
         """
@@ -309,17 +263,8 @@ class WorkflowService:
         if not draft_workflow:
             raise ValueError("Workflow not initialized")
 
-        # conv_vars = common_helpers.get_conversation_variables()
-
         # run draft workflow node
         start_at = time.perf_counter()
-        with Session(bind=db.engine) as session:
-            # TODO(QunatumGhost): inject conversation variables
-            # to variable pool.
-            draft_var_srv = WorkflowDraftVariableService(session)
-
-            conv_vars_list = draft_var_srv.list_conversation_variables(app_id=app_model.id)
-            conv_var_mapping = {v.name: v.get_value().value for v in conv_vars_list.variables}
 
         node_execution = self._handle_node_run_result(
             invoke_node_fn=lambda: WorkflowEntry.single_step_run(
@@ -327,7 +272,6 @@ class WorkflowService:
                 node_id=node_id,
                 user_inputs=user_inputs,
                 user_id=account.id,
-                conversation_variables=conv_var_mapping,
             ),
             start_at=start_at,
             node_id=node_id,
@@ -347,33 +291,12 @@ class WorkflowService:
 
         # Convert node_execution to WorkflowNodeExecution after save
         workflow_node_execution = repository.to_db_model(node_execution)
-        output = workflow_node_execution.outputs_dict or {}
-
-        exec_metadata = workflow_node_execution.execution_metadata_dict or {}
-
-        should_save = should_save_output_variables_for_draft(
-            invoke_from=InvokeFrom.DEBUGGER,
-            loop_id=exec_metadata.get(NodeRunMetadataKey.LOOP_ID, None),
-            iteration_id=exec_metadata.get(NodeRunMetadataKey.ITERATION_ID, None),
-        )
-        if not should_save:
-            return workflow_node_execution
-        # TODO(QuantumGhost): single step does not include loop_id or iteration_id in execution_metadata.
-        with Session(bind=db.engine) as session:
-            draft_var_srv = WorkflowDraftVariableService(session)
-            draft_var_srv.save_output_variables(
-                app_id=app_model.id,
-                node_id=workflow_node_execution.node_id,
-                node_type=NodeType(workflow_node_execution.node_type),
-                output=output,
-            )
-            session.commit()
 
         return workflow_node_execution
 
     def run_free_workflow_node(
         self, node_data: dict, tenant_id: str, user_id: str, node_id: str, user_inputs: dict[str, Any]
-    ) -> NodeExecution:
+    ) -> WorkflowNodeExecution:
         """
         Run draft workflow node
         """
@@ -399,10 +322,9 @@ class WorkflowService:
         invoke_node_fn: Callable[[], tuple[BaseNode, Generator[NodeEvent | InNodeEvent, None, None]]],
         start_at: float,
         node_id: str,
-    ) -> NodeExecution:
+    ) -> WorkflowNodeExecution:
         try:
             node_instance, generator = invoke_node_fn()
-            generator = _inspect_generator(generator)
 
             node_run_result: NodeRunResult | None = None
             for event in generator:
@@ -452,7 +374,7 @@ class WorkflowService:
             error = e.error
 
         # Create a NodeExecution domain model
-        node_execution = NodeExecution(
+        node_execution = WorkflowNodeExecution(
             id=str(uuid4()),
             workflow_id="",  # This is a single-step execution, so no workflow ID
             index=1,
@@ -481,13 +403,13 @@ class WorkflowService:
 
             # Map status from WorkflowNodeExecutionStatus to NodeExecutionStatus
             if node_run_result.status == WorkflowNodeExecutionStatus.SUCCEEDED:
-                node_execution.status = NodeExecutionStatus.SUCCEEDED
+                node_execution.status = WorkflowNodeExecutionStatus.SUCCEEDED
             elif node_run_result.status == WorkflowNodeExecutionStatus.EXCEPTION:
-                node_execution.status = NodeExecutionStatus.EXCEPTION
+                node_execution.status = WorkflowNodeExecutionStatus.EXCEPTION
                 node_execution.error = node_run_result.error
         else:
             # Set failed status and error
-            node_execution.status = NodeExecutionStatus.FAILED
+            node_execution.status = WorkflowNodeExecutionStatus.FAILED
             node_execution.error = error
 
         return node_execution
@@ -609,19 +531,3 @@ class WorkflowService:
 
         session.delete(workflow)
         return True
-
-
-def _inspect_generator(gen: Generator[Any] | Any) -> Any:
-    if not isgenerator(gen):
-        return gen
-
-    def wrapper():
-        for item in gen:
-            logging.getLogger(__name__).info(
-                "received generator item, type=%s, value=%s",
-                type(item),
-                item,
-            )
-            yield item
-
-    return wrapper()

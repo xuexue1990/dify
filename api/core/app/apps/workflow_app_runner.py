@@ -1,8 +1,6 @@
 from collections.abc import Mapping
 from typing import Any, Optional, cast
 
-from sqlalchemy.orm import Session
-
 from core.app.apps.base_app_queue_manager import AppQueueManager, PublishFrom
 from core.app.apps.base_app_runner import AppRunner
 from core.app.entities.queue_entities import (
@@ -31,8 +29,8 @@ from core.app.entities.queue_entities import (
     QueueWorkflowStartedEvent,
     QueueWorkflowSucceededEvent,
 )
-from core.workflow.entities.node_entities import NodeRunMetadataKey
 from core.workflow.entities.variable_pool import VariablePool
+from core.workflow.entities.workflow_node_execution import WorkflowNodeExecutionMetadataKey
 from core.workflow.graph_engine.entities.event import (
     AgentLogEvent,
     GraphEngineEvent,
@@ -68,18 +66,11 @@ from core.workflow.workflow_entry import WorkflowEntry
 from extensions.ext_database import db
 from models.model import App
 from models.workflow import Workflow
-from services.workflow_draft_variable_service import (
-    WorkflowDraftVariableService,
-    should_save_output_variables_for_draft,
-)
 
 
 class WorkflowBasedAppRunner(AppRunner):
     def __init__(self, queue_manager: AppQueueManager):
         self.queue_manager = queue_manager
-
-    def _get_app_id(self) -> str:
-        raise NotImplementedError("not implemented")
 
     def _init_graph(self, graph_config: Mapping[str, Any]) -> Graph:
         """
@@ -304,7 +295,7 @@ class WorkflowBasedAppRunner(AppRunner):
             inputs: Mapping[str, Any] | None = {}
             process_data: Mapping[str, Any] | None = {}
             outputs: Mapping[str, Any] | None = {}
-            execution_metadata: Mapping[NodeRunMetadataKey, Any] | None = {}
+            execution_metadata: Mapping[WorkflowNodeExecutionMetadataKey, Any] | None = {}
             if node_run_result:
                 inputs = node_run_result.inputs
                 process_data = node_run_result.process_data
@@ -385,24 +376,6 @@ class WorkflowBasedAppRunner(AppRunner):
                     in_loop_id=event.in_loop_id,
                 )
             )
-
-            # FIXME(QuantumGhost): rely on private state of queue_manager is not ideal.
-            should_save = should_save_output_variables_for_draft(
-                self.queue_manager._invoke_from,
-                loop_id=event.in_loop_id,
-                iteration_id=event.in_iteration_id,
-            )
-            if should_save and outputs is not None:
-                with Session(bind=db.engine) as session:
-                    draft_var_srv = WorkflowDraftVariableService(session)
-                    draft_var_srv.save_output_variables(
-                        app_id=self._get_app_id(),
-                        node_id=event.node_id,
-                        node_type=event.node_type,
-                        output=outputs,
-                    )
-                    session.commit()
-
         elif isinstance(event, NodeRunFailedEvent):
             self._publish_event(
                 QueueNodeFailedEvent(

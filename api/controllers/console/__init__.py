@@ -56,7 +56,6 @@ from .app import (
     conversation,
     conversation_variables,
     generator,
-    mcp_server,
     message,
     model_config,
     ops_trace,
@@ -64,7 +63,6 @@ from .app import (
     statistic,
     workflow,
     workflow_app_log,
-    workflow_draft_variable,
     workflow_run,
     workflow_statistic,
 )
@@ -77,6 +75,7 @@ from .billing import billing, compliance
 
 # Import datasets controllers
 from .datasets import (
+    data_source,
     datasets,
     datasets_document,
     datasets_segments,
@@ -84,12 +83,6 @@ from .datasets import (
     hit_testing,
     metadata,
     website,
-)
-from .datasets.rag_pipeline import (
-    rag_pipeline,
-    rag_pipeline_datasets,
-    rag_pipeline_import,
-    rag_pipeline_workflow,
 )
 
 # Import explore controllers
