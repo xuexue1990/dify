@@ -5,13 +5,13 @@ from core.variables import SegmentType, Variable
 from core.workflow.constants import CONVERSATION_VARIABLE_NODE_ID
 from core.workflow.conversation_variable_updater import ConversationVariableUpdater
 from core.workflow.entities.node_entities import NodeRunResult
+from core.workflow.entities.workflow_node_execution import WorkflowNodeExecutionStatus
 from core.workflow.nodes.base import BaseNode
 from core.workflow.nodes.enums import NodeType
 from core.workflow.nodes.variable_assigner.common import helpers as common_helpers
 from core.workflow.nodes.variable_assigner.common.exc import VariableOperatorNodeError
 from core.workflow.nodes.variable_assigner.common.impl import conversation_variable_updater_factory
 from factories import variable_factory
-from models.workflow import WorkflowNodeExecutionStatus
 
 from .node_data import VariableAssignerData, WriteMode
 
@@ -85,20 +85,18 @@ class VariableAssignerNode(BaseNode[VariableAssignerData]):
         conv_var_updater = self._conv_var_updater_factory()
         conv_var_updater.update(conversation_id=conversation_id.text, variable=updated_variable)
         conv_var_updater.flush()
+        updated_variables = [common_helpers.variable_to_processed_data(assigned_variable_selector, updated_variable)]
 
         return NodeRunResult(
             status=WorkflowNodeExecutionStatus.SUCCEEDED,
             inputs={
                 "value": income_value.to_object(),
             },
-            outputs={
-                # NOTE(QuantumGhost): although only one variable is updated in `v1.VariableAssignerNode`,
-                # we still set `output_variables` as a list to ensure the schema of output is
-                # compatible with `v2.VariableAssignerNode`.
-                "updated_variables": [
-                    common_helpers.variable_to_output_mapping(assigned_variable_selector, updated_variable)
-                ]
-            },
+            # NOTE(QuantumGhost): although only one variable is updated in `v1.VariableAssignerNode`,
+            # we still set `output_variables` as a list to ensure the schema of output is
+            # compatible with `v2.VariableAssignerNode`.
+            process_data=common_helpers.set_updated_variables({}, updated_variables),
+            outputs={},
         )
 
 

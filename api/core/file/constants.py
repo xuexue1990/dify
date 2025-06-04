@@ -1,21 +1,5 @@
-from typing import Any
-
+# TODO(QuantumGhost): Refactor variable type identification. Instead of directly
+# comparing `dify_model_identity` with constants throughout the codebase, extract
+# this logic into a dedicated function. This would encapsulate the implementation
+# details of how different variable types are identified.
 FILE_MODEL_IDENTITY = "__dify__file__"
-
-# DUMMY_OUTPUT_IDENTITY is a placeholder output for workflow nodes.
-# Its sole possible value is `None`.
-#
-# This is used to signal the execution of a workflow node when it has no other outputs.
-_DUMMY_OUTPUT_IDENTITY = "__dummy__"
-_DUMMY_OUTPUT_VALUE: None = None
-
-
-def add_dummy_output(original: dict[str, Any] | None) -> dict[str, Any]:
-    if original is None:
-        original = {}
-    original[_DUMMY_OUTPUT_IDENTITY] = _DUMMY_OUTPUT_VALUE
-    return original
-
-
-def is_dummy_output_variable(name: str) -> bool:
-    return name == _DUMMY_OUTPUT_IDENTITY

@@ -1,5 +1,4 @@
 import json
-import logging
 import time
 import uuid
 from collections.abc import Callable, Generator, Mapping, Sequence
@@ -16,9 +15,9 @@ from core.app.entities.app_invoke_entities import InvokeFrom
 from core.file import File
 from core.repositories import SQLAlchemyWorkflowNodeExecutionRepository
 from core.variables import Variable
-from core.workflow.entities.node_entities import NodeRunMetadataKey, NodeRunResult
-from core.workflow.entities.node_execution_entities import NodeExecution, NodeExecutionStatus
+from core.workflow.entities.node_entities import NodeRunResult, WorkflowNodeExecutionMetadataKey
 from core.workflow.entities.variable_pool import VariablePool
+from core.workflow.entities.workflow_node_execution import WorkflowNodeExecution, WorkflowNodeExecutionStatus
 from core.workflow.enums import SystemVariableKey
 from core.workflow.errors import WorkflowNodeRunFailedError
 from core.workflow.graph_engine.entities.event import InNodeEvent
@@ -32,14 +31,12 @@ from core.workflow.workflow_entry import WorkflowEntry
 from events.app_event import app_draft_workflow_was_synced, app_published_workflow_was_updated
 from extensions.ext_database import db
 from factories.variable_factory import segment_to_variable
-from libs import gen_utils
 from models.account import Account
 from models.model import App, AppMode
 from models.tools import WorkflowToolProvider
 from models.workflow import (
     Workflow,
-    WorkflowNodeExecution,
-    WorkflowNodeExecutionStatus,
+    WorkflowNodeExecutionModel,
     WorkflowNodeExecutionTriggeredFrom,
     WorkflowType,
 )
@@ -59,18 +56,18 @@ class WorkflowService:
     Workflow Service
     """
 
-    def get_node_last_run(self, app_model: App, workflow: Workflow, node_id: str) -> WorkflowNodeExecution | None:
+    def get_node_last_run(self, app_model: App, workflow: Workflow, node_id: str) -> WorkflowNodeExecutionModel | None:
         # TODO(QuantumGhost): This query is not fully covered by index.
         criteria = (
-            WorkflowNodeExecution.tenant_id == app_model.tenant_id,
-            WorkflowNodeExecution.app_id == app_model.id,
-            WorkflowNodeExecution.workflow_id == workflow.id,
-            WorkflowNodeExecution.node_id == node_id,
+            WorkflowNodeExecutionModel.tenant_id == app_model.tenant_id,
+            WorkflowNodeExecutionModel.app_id == app_model.id,
+            WorkflowNodeExecutionModel.workflow_id == workflow.id,
+            WorkflowNodeExecutionModel.node_id == node_id,
         )
         node_exec = (
-            db.session.query(WorkflowNodeExecution)
+            db.session.query(WorkflowNodeExecutionModel)
             .filter(*criteria)
-            .order_by(WorkflowNodeExecution.created_at.desc())
+            .order_by(WorkflowNodeExecutionModel.created_at.desc())
             .first()
         )
         return node_exec
@@ -318,7 +315,7 @@ class WorkflowService:
         account: Account,
         query: str = "",
         files: list[File] | None = None,
-    ) -> WorkflowNodeExecution:
+    ) -> WorkflowNodeExecutionModel:
         """
         Run draft workflow node
         """
@@ -329,8 +326,10 @@ class WorkflowService:
 
         # TODO(QuantumGhost): We may get rid of the `list_conversation_variables`
         # here, and rely on `DraftVarLoader` to load conversation variables.
+
         with Session(bind=db.engine) as session:
             draft_var_srv = WorkflowDraftVariableService(session)
+            draft_var_srv.prefill_conversation_variable_default_values(draft_workflow)
 
             conv_vars_models = draft_var_srv.list_conversation_variables(app_id=app_model.id)
             conv_vars = [
@@ -343,7 +342,7 @@ class WorkflowService:
         if node_type == NodeType.START:
             with Session(bind=db.engine) as session, session.begin():
                 draft_var_srv = WorkflowDraftVariableService(session)
-                conversation_id = draft_var_srv.create_conversation_and_set_conversation_variables(
+                conversation_id = draft_var_srv.get_or_create_conversation(
                     account_id=account.id,
                     app=app_model,
                     workflow=draft_workflow,
@@ -369,7 +368,10 @@ class WorkflowService:
                 conversation_variables=[],
             )
 
-        variable_loader = DraftVarLoader(engine=db.engine, app_id=app_model.id)
+        variable_loader = DraftVarLoader(
+            engine=db.engine,
+            app_id=app_model.id,
+        )
 
         run = WorkflowEntry.single_step_run(
             workflow=draft_workflow,
@@ -402,12 +404,13 @@ class WorkflowService:
 
         # Convert node_execution to WorkflowNodeExecution after save
         workflow_node_execution = repository.to_db_model(node_execution)
+        process_data = workflow_node_execution.process_data_dict or {}
         output = workflow_node_execution.outputs_dict or {}
 
         exec_metadata = workflow_node_execution.execution_metadata_dict or {}
 
-        loop_id = exec_metadata.get(NodeRunMetadataKey.LOOP_ID, None)
-        iteration_id = exec_metadata.get(NodeRunMetadataKey.ITERATION_ID, None)
+        loop_id = exec_metadata.get(WorkflowNodeExecutionMetadataKey.LOOP_ID, None)
+        iteration_id = exec_metadata.get(WorkflowNodeExecutionMetadataKey.ITERATION_ID, None)
 
         # TODO(QuantumGhost): single step does not include loop_id or iteration_id in execution_metadata.
         with Session(bind=db.engine) as session, session.begin():
@@ -419,13 +422,13 @@ class WorkflowService:
                 invoke_from=InvokeFrom.DEBUGGER,
                 enclosing_node_id=loop_id or iteration_id or None,
             )
-            draft_var_saver.save(output)
+            draft_var_saver.save(process_data=process_data, output=output)
             session.commit()
         return workflow_node_execution
 
     def run_free_workflow_node(
         self, node_data: dict, tenant_id: str, user_id: str, node_id: str, user_inputs: dict[str, Any]
-    ) -> NodeExecution:
+    ) -> WorkflowNodeExecution:
         """
         Run draft workflow node
         """
@@ -451,10 +454,9 @@ class WorkflowService:
         invoke_node_fn: Callable[[], tuple[BaseNode, Generator[NodeEvent | InNodeEvent, None, None]]],
         start_at: float,
         node_id: str,
-    ) -> NodeExecution:
+    ) -> WorkflowNodeExecution:
         try:
             node_instance, generator = invoke_node_fn()
-            generator = gen_utils.inspect(generator, logging.getLogger(__name__))
 
             node_run_result: NodeRunResult | None = None
             for event in generator:
@@ -504,7 +506,7 @@ class WorkflowService:
             error = e.error
 
         # Create a NodeExecution domain model
-        node_execution = NodeExecution(
+        node_execution = WorkflowNodeExecution(
             id=str(uuid4()),
             workflow_id="",  # This is a single-step execution, so no workflow ID
             index=1,
@@ -533,13 +535,13 @@ class WorkflowService:
 
             # Map status from WorkflowNodeExecutionStatus to NodeExecutionStatus
             if node_run_result.status == WorkflowNodeExecutionStatus.SUCCEEDED:
-                node_execution.status = NodeExecutionStatus.SUCCEEDED
+                node_execution.status = WorkflowNodeExecutionStatus.SUCCEEDED
             elif node_run_result.status == WorkflowNodeExecutionStatus.EXCEPTION:
-                node_execution.status = NodeExecutionStatus.EXCEPTION
+                node_execution.status = WorkflowNodeExecutionStatus.EXCEPTION
                 node_execution.error = node_run_result.error
         else:
             # Set failed status and error
-            node_execution.status = NodeExecutionStatus.FAILED
+            node_execution.status = WorkflowNodeExecutionStatus.FAILED
             node_execution.error = error
 
         return node_execution
@@ -688,7 +690,7 @@ def _setup_variable_pool(
             SystemVariableKey.APP_ID: workflow.app_id,
             SystemVariableKey.WORKFLOW_ID: workflow.id,
             # Randomly generated.
-            SystemVariableKey.WORKFLOW_RUN_ID: str(uuid.uuid4()),
+            SystemVariableKey.WORKFLOW_EXECUTION_ID: str(uuid.uuid4()),
         }
     else:
         system_inputs = {}

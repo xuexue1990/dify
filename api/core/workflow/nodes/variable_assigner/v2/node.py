@@ -7,12 +7,12 @@ from core.variables import SegmentType, Variable
 from core.workflow.constants import CONVERSATION_VARIABLE_NODE_ID
 from core.workflow.conversation_variable_updater import ConversationVariableUpdater
 from core.workflow.entities.node_entities import NodeRunResult
+from core.workflow.entities.workflow_node_execution import WorkflowNodeExecutionStatus
 from core.workflow.nodes.base import BaseNode
 from core.workflow.nodes.enums import NodeType
 from core.workflow.nodes.variable_assigner.common import helpers as common_helpers
 from core.workflow.nodes.variable_assigner.common.exc import VariableOperatorNodeError
 from core.workflow.nodes.variable_assigner.common.impl import conversation_variable_updater_factory
-from models.workflow import WorkflowNodeExecutionStatus
 
 from . import helpers
 from .constants import EMPTY_VALUE_MAPPING
@@ -162,18 +162,18 @@ class VariableAssignerNode(BaseNode[VariableAssignerNodeData]):
                         variable=variable,
                     )
         conv_var_updater.flush()
+        updated_variables = [
+            common_helpers.variable_to_processed_data(selector, seg)
+            for selector in updated_variable_selectors
+            if (seg := self.graph_runtime_state.variable_pool.get(selector)) is not None
+        ]
 
+        process_data = common_helpers.set_updated_variables(process_data, updated_variables)
         return NodeRunResult(
             status=WorkflowNodeExecutionStatus.SUCCEEDED,
             inputs=inputs,
             process_data=process_data,
-            outputs={
-                "updated_variables": [
-                    common_helpers.variable_to_output_mapping(selector, seg)
-                    for selector in updated_variable_selectors
-                    if (seg := self.graph_runtime_state.variable_pool.get(selector)) is not None
-                ],
-            },
+            outputs={},
         )
 
     def _handle_item(

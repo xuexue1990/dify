@@ -25,14 +25,14 @@ from core.model_runtime.errors.invoke import InvokeAuthorizationError
 from core.ops.ops_trace_manager import TraceQueueManager
 from core.repositories import SQLAlchemyWorkflowNodeExecutionRepository
 from core.repositories.sqlalchemy_workflow_execution_repository import SQLAlchemyWorkflowExecutionRepository
-from core.workflow.repository.workflow_execution_repository import WorkflowExecutionRepository
-from core.workflow.repository.workflow_node_execution_repository import WorkflowNodeExecutionRepository
-from core.workflow.variable_loader import DUMMY_VARIABLE_LOADER
+from core.workflow.repositories.workflow_execution_repository import WorkflowExecutionRepository
+from core.workflow.repositories.workflow_node_execution_repository import WorkflowNodeExecutionRepository
+from core.workflow.variable_loader import DUMMY_VARIABLE_LOADER, VariableLoader
 from extensions.ext_database import db
 from factories import file_factory
 from models import Account, App, EndUser, Workflow, WorkflowNodeExecutionTriggeredFrom
 from models.enums import WorkflowRunTriggeredFrom
-from services.workflow_draft_variable_service import DraftVarLoader
+from services.workflow_draft_variable_service import DraftVarLoader, WorkflowDraftVariableService
 
 logger = logging.getLogger(__name__)
 
@@ -134,7 +134,7 @@ class WorkflowAppGenerator(BaseAppGenerator):
             invoke_from=invoke_from,
             call_depth=call_depth,
             trace_manager=trace_manager,
-            workflow_run_id=workflow_run_id,
+            workflow_execution_id=workflow_run_id,
         )
 
         contexts.plugin_tool_providers.set({})
@@ -187,7 +187,7 @@ class WorkflowAppGenerator(BaseAppGenerator):
         workflow_node_execution_repository: WorkflowNodeExecutionRepository,
         streaming: bool = True,
         workflow_thread_pool_id: Optional[str] = None,
-        variable_loader: DraftVarLoader = DUMMY_VARIABLE_LOADER,
+        variable_loader: VariableLoader = DUMMY_VARIABLE_LOADER,
     ) -> Union[Mapping[str, Any], Generator[str | Mapping[str, Any], None, None]]:
         """
         Generate App response.
@@ -283,7 +283,7 @@ class WorkflowAppGenerator(BaseAppGenerator):
             single_iteration_run=WorkflowAppGenerateEntity.SingleIterationRunEntity(
                 node_id=node_id, inputs=args["inputs"]
             ),
-            workflow_run_id=str(uuid.uuid4()),
+            workflow_execution_id=str(uuid.uuid4()),
         )
         contexts.plugin_tool_providers.set({})
         contexts.plugin_tool_providers_lock.set(threading.Lock())
@@ -308,6 +308,8 @@ class WorkflowAppGenerator(BaseAppGenerator):
             app_id=application_generate_entity.app_config.app_id,
             triggered_from=WorkflowNodeExecutionTriggeredFrom.SINGLE_STEP,
         )
+        draft_var_srv = WorkflowDraftVariableService(db.session())
+        draft_var_srv.prefill_conversation_variable_default_values(workflow)
         var_loader = DraftVarLoader(
             engine=db.engine,
             app_id=application_generate_entity.app_config.app_id,
@@ -364,7 +366,7 @@ class WorkflowAppGenerator(BaseAppGenerator):
             invoke_from=InvokeFrom.DEBUGGER,
             extras={"auto_generate_conversation_name": False},
             single_loop_run=WorkflowAppGenerateEntity.SingleLoopRunEntity(node_id=node_id, inputs=args["inputs"]),
-            workflow_run_id=str(uuid.uuid4()),
+            workflow_execution_id=str(uuid.uuid4()),
         )
         contexts.plugin_tool_providers.set({})
         contexts.plugin_tool_providers_lock.set(threading.Lock())
@@ -389,6 +391,8 @@ class WorkflowAppGenerator(BaseAppGenerator):
             app_id=application_generate_entity.app_config.app_id,
             triggered_from=WorkflowNodeExecutionTriggeredFrom.SINGLE_STEP,
         )
+        draft_var_srv = WorkflowDraftVariableService(db.session())
+        draft_var_srv.prefill_conversation_variable_default_values(workflow)
         var_loader = DraftVarLoader(
             engine=db.engine,
             app_id=application_generate_entity.app_config.app_id,
@@ -411,7 +415,7 @@ class WorkflowAppGenerator(BaseAppGenerator):
         application_generate_entity: WorkflowAppGenerateEntity,
         queue_manager: AppQueueManager,
         context: contextvars.Context,
-        variable_loader: DraftVarLoader,
+        variable_loader: VariableLoader,
         workflow_thread_pool_id: Optional[str] = None,
     ) -> None:
         """

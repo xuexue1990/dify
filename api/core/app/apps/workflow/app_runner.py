@@ -82,7 +82,6 @@ class WorkflowAppRunner(WorkflowBasedAppRunner):
                 workflow=workflow,
                 node_id=self.application_generate_entity.single_iteration_run.node_id,
                 user_inputs=self.application_generate_entity.single_iteration_run.inputs,
-                variable_loader=self._var_loader,
             )
         elif self.application_generate_entity.single_loop_run:
             # if only single loop run is requested
@@ -101,7 +100,7 @@ class WorkflowAppRunner(WorkflowBasedAppRunner):
                 SystemVariableKey.USER_ID: user_id,
                 SystemVariableKey.APP_ID: app_config.app_id,
                 SystemVariableKey.WORKFLOW_ID: app_config.workflow_id,
-                SystemVariableKey.WORKFLOW_RUN_ID: self.application_generate_entity.workflow_run_id,
+                SystemVariableKey.WORKFLOW_EXECUTION_ID: self.application_generate_entity.workflow_execution_id,
             }
 
             variable_pool = VariablePool(

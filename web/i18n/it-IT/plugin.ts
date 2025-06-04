@@ -46,22 +46,28 @@ const translation = {
     },
     toolSelector: {
       paramsTip1: 'Controlla i parametri di inferenza LLM.',
-      descriptionPlaceholder: 'Breve descrizione dello scopo dell\'utensile, ad es. ottenere la temperatura per una posizione specifica.',
+      descriptionPlaceholder:
+        'Breve descrizione dello scopo dell\'utensile, ad es. ottenere la temperatura per una posizione specifica.',
       unsupportedTitle: 'Azione non supportata',
       uninstalledTitle: 'Strumento non installato',
       params: 'CONFIGURAZIONE DEL RAGIONAMENTO',
-      uninstalledContent: 'Questo plugin viene installato dal repository locale/GitHub. Si prega di utilizzare dopo l\'installazione.',
-      empty: 'Fare clic sul pulsante \'+\' per aggiungere strumenti. È possibile aggiungere più strumenti.',
+      uninstalledContent:
+        'Questo plugin viene installato dal repository locale/GitHub. Si prega di utilizzare dopo l\'installazione.',
+      empty:
+        'Fare clic sul pulsante \'+\' per aggiungere strumenti. È possibile aggiungere più strumenti.',
       toolLabel: 'Strumento',
       unsupportedContent2: 'Fare clic per cambiare versione.',
       title: 'Aggiungi strumento',
       settings: 'IMPOSTAZIONI UTENTE',
       uninstalledLink: 'Gestisci nei plugin',
       placeholder: 'Seleziona uno strumento...',
-      unsupportedContent: 'La versione del plug-in installata non fornisce questa azione.',
+      unsupportedContent:
+        'La versione del plug-in installata non fornisce questa azione.',
       descriptionLabel: 'Descrizione dell\'utensile',
-      auto: 'Auto',
-      paramsTip2: 'Quando \'Auto\' è disattivato, viene utilizzato il valore predefinito.',
+      auto: 'Automatico',
+      paramsTip2:
+        'Quando \'Automatico\' è disattivato, viene utilizzato il valore predefinito.',
+      toolSetting: 'Impostazioni degli strumenti',
     },
     modelNum: '{{num}} MODELLI INCLUSI',
     endpointModalTitle: 'Endpoint di configurazione',
@@ -72,12 +78,14 @@ const translation = {
     serviceOk: 'Servizio OK',
     disabled: 'Disabile',
     configureModel: 'Configura modello',
-    endpointModalDesc: 'Una volta configurate, è possibile utilizzare le funzionalità fornite dal plug-in tramite endpoint API.',
+    endpointModalDesc:
+      'Una volta configurate, è possibile utilizzare le funzionalità fornite dal plug-in tramite endpoint API.',
     endpointDeleteContent: 'Vuoi rimuovere {{name}}?',
     strategyNum: '{{num}} {{strategia}} INCLUSO',
     endpoints: 'Endpoint',
     configureApp: 'Configura l\'app',
-    endpointsTip: 'Questo plug-in fornisce funzionalità specifiche tramite endpoint ed è possibile configurare più set di endpoint per l\'area di lavoro corrente.',
+    endpointsTip:
+      'Questo plug-in fornisce funzionalità specifiche tramite endpoint ed è possibile configurare più set di endpoint per l\'area di lavoro corrente.',
     endpointDisableContent: 'Vorresti disabilitare {{name}}?',
     endpointDeleteTip: 'Rimuovi punto finale',
     endpointsEmpty: 'Fare clic sul pulsante \'+\' per aggiungere un punto finale',
@@ -118,11 +126,13 @@ const translation = {
     next: 'Prossimo',
     pluginLoadErrorDesc: 'Questo plugin non verrà installato',
     installComplete: 'Installazione completata',
-    dropPluginToInstall: 'Rilascia qui il pacchetto del plug-in per installarlo',
+    dropPluginToInstall:
+      'Rilascia qui il pacchetto del plug-in per installarlo',
     installedSuccessfully: 'Installazione riuscita',
     installedSuccessfullyDesc: 'Il plug-in è stato installato correttamente.',
     installPlugin: 'Installa il plugin',
-    fromTrustSource: 'Assicurati di installare i plug-in solo da una <trustSource>fonte attendibile</trustSource>.',
+    fromTrustSource:
+      'Assicurati di installare i plug-in solo da una <trustSource>fonte attendibile</trustSource>.',
     uploadFailed: 'Caricamento non riuscito',
     uploadingPackage: 'Caricamento di {{packageName}}...',
     pluginLoadError: 'Errore di caricamento del plugin',
@@ -140,7 +150,8 @@ const translation = {
   installFromGitHub: {
     installedSuccessfully: 'Installazione riuscita',
     selectPackagePlaceholder: 'Seleziona un pacchetto',
-    installNote: 'Assicurati di installare i plug-in solo da una fonte attendibile.',
+    installNote:
+      'Assicurati di installare i plug-in solo da una fonte attendibile.',
     updatePlugin: 'Aggiorna il plugin da GitHub',
     uploadFailed: 'Caricamento non riuscito',
     gitHubRepo: 'Repository GitHub',
@@ -161,8 +172,10 @@ const translation = {
   },
   error: {
     fetchReleasesError: 'Impossibile recuperare le release. Riprova più tardi.',
-    noReleasesFound: 'Nessuna pubblicazione trovata. Controlla il repository GitHub o l\'URL di input.',
-    inValidGitHubUrl: 'URL GitHub non valido. Inserisci un URL valido nel formato: https://github.com/owner/repo',
+    noReleasesFound:
+      'Nessuna pubblicazione trovata. Controlla il repository GitHub o l\'URL di input.',
+    inValidGitHubUrl:
+      'URL GitHub non valido. Inserisci un URL valido nel formato: https://github.com/owner/repo',
   },
   marketplace: {
     sortOption: {
@@ -185,11 +198,14 @@ const translation = {
   },
   task: {
     clearAll: 'Cancella tutto',
-    installError: 'Impossibile installare i plugin {{errorLength}}, clicca per visualizzare',
+    installError:
+      'Impossibile installare i plugin {{errorLength}}, clicca per visualizzare',
     installing: 'Installazione dei plugin {{installingLength}}, 0 fatto.',
     installedError: 'Impossibile installare i plugin di {{errorLength}}',
-    installingWithError: 'Installazione dei plugin {{installingLength}}, {{successLength}} successo, {{errorLength}} fallito',
-    installingWithSuccess: 'Installazione dei plugin {{installingLength}}, {{successLength}} successo.',
+    installingWithError:
+      'Installazione dei plugin {{installingLength}}, {{successLength}} successo, {{errorLength}} fallito',
+    installingWithSuccess:
+      'Installazione dei plugin {{installingLength}}, {{successLength}} successo.',
   },
   searchInMarketplace: 'Cerca nel Marketplace',
   endpointsEnabled: '{{num}} set di endpoint abilitati',
@@ -209,7 +225,9 @@ const translation = {
   metadata: {
     title: 'Plugin',
   },
-  difyVersionNotCompatible: 'L\'attuale versione di Dify non è compatibile con questo plugin, si prega di aggiornare alla versione minima richiesta: {{minimalDifyVersion}}',
+  difyVersionNotCompatible:
+    'L\'attuale versione di Dify non è compatibile con questo plugin, si prega di aggiornare alla versione minima richiesta: {{minimalDifyVersion}}',
+  requestAPlugin: 'Richiedi un plugin',
 }
 
 export default translation

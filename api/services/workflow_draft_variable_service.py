@@ -1,6 +1,8 @@
 import dataclasses
+import datetime
 import logging
 from collections.abc import Mapping, Sequence
+from enum import StrEnum
 from typing import Any, ClassVar
 
 from sqlalchemy import Engine, orm
@@ -14,6 +16,7 @@ from core.variables.consts import MIN_SELECTORS_LENGTH
 from core.workflow.constants import CONVERSATION_VARIABLE_NODE_ID, ENVIRONMENT_VARIABLE_NODE_ID, SYSTEM_VARIABLE_NODE_ID
 from core.workflow.enums import SystemVariableKey
 from core.workflow.nodes import NodeType
+from core.workflow.nodes.variable_assigner.common.helpers import get_updated_variables
 from core.workflow.variable_loader import VariableLoader
 from factories import variable_factory
 from factories.variable_factory import build_segment, segment_to_variable
@@ -29,21 +32,45 @@ class WorkflowDraftVariableList:
     total: int | None = None
 
 
+class _DraftVarServiceError(Exception):
+    pass
+
+
 class DraftVarLoader(VariableLoader):
     # This implements the VariableLoader interface for loading draft variables.
     #
     # ref: core.workflow.variable_loader.VariableLoader
-    def __init__(self, engine: Engine, app_id: str) -> None:
+
+    # Database engine used for loading variables.
+    _engine: Engine
+    # Application ID for which variables are being loaded.
+    _app_id: str
+    _fallback_variables: Sequence[Variable]
+
+    def __init__(
+        self,
+        engine: Engine,
+        app_id: str,
+        fallback_variables: Sequence[Variable] | None = None,
+    ) -> None:
         self._engine = engine
         self._app_id = app_id
+        self._fallback_variables = fallback_variables or []
+
+    def _selector_to_tuple(self, selector: Sequence[str]) -> tuple[str, str]:
+        return (selector[0], selector[1])
 
     def load_variables(self, selectors: list[list[str]]) -> list[Variable]:
         if not selectors:
             return []
+
+        # Map each selector (as a tuple via `_selector_to_tuple`) to its corresponding Variable instance.
+        variable_by_selector: dict[tuple[str, str], Variable] = {}
+
         with Session(bind=self._engine, expire_on_commit=False) as session:
             srv = WorkflowDraftVariableService(session)
             draft_vars = srv.get_draft_variables_by_selectors(self._app_id, selectors)
-        variables = []
+
         for draft_var in draft_vars:
             segment = build_segment(
                 draft_var.value,
@@ -55,8 +82,25 @@ class DraftVarLoader(VariableLoader):
                 name=draft_var.name,
                 description=draft_var.description,
             )
-            variables.append(variable)
-        return variables
+            selector_tuple = self._selector_to_tuple(variable.selector)
+            variable_by_selector[selector_tuple] = variable
+
+        # If a conversation variable is referenced but not present in the draft variables table,
+        # fall back to returning the variable with its default value.
+
+        fallback_var_by_selector = {}
+        for variable in self._fallback_variables:
+            selector_tuple = self._selector_to_tuple(variable.selector)
+            fallback_var_by_selector[selector_tuple] = variable
+
+        for selector in selectors:
+            selector_tuple = self._selector_to_tuple(selector)
+            if selector_tuple in variable_by_selector:
+                continue
+            if selector_tuple in fallback_var_by_selector:
+                variable_by_selector[selector_tuple] = fallback_var_by_selector[selector_tuple]
+
+        return list(variable_by_selector.values())
 
 
 class WorkflowDraftVariableService:
@@ -156,6 +200,27 @@ class WorkflowDraftVariableService:
             variable.set_name(name)
         if value is not None:
             variable.set_value(value)
+        variable.last_edited_at = datetime.datetime.now(datetime.UTC).replace(tzinfo=None)
+        self._session.flush()
+        return variable
+
+    def reset_conversation_variable(
+        self, workflow: Workflow, variable: WorkflowDraftVariable
+    ) -> WorkflowDraftVariable | None:
+        conv_var_by_name = {i.name: i for i in workflow.conversation_variables}
+        conv_var = conv_var_by_name.get(variable.name)
+
+        if conv_var is None:
+            self._session.delete(instance=variable)
+            self._session.flush()
+            _logger.warning(
+                "Conversation variable not found for draft variable, id=%s, name=%s", variable.id, variable.name
+            )
+            return None
+
+        variable.set_value(conv_var)
+        variable.last_edited_at = None
+        self._session.add(variable)
         self._session.flush()
         return variable
 
@@ -196,12 +261,21 @@ class WorkflowDraftVariableService:
             return None
         return segment.value
 
-    def create_conversation_and_set_conversation_variables(
+    def get_or_create_conversation(
         self,
         account_id: str,
         app: App,
         workflow: Workflow,
     ) -> str:
+        """
+        get_or_create_conversation creates and returns the ID of a conversation for debugging.
+
+        If a conversation already exists, as determined by the following criteria, its ID is returned:
+        - The system variable `sys.conversation_id` exists in the draft variable table, and
+        - A corresponding conversation record is found in the database.
+
+        If no such conversation exists, a new conversation is created and its ID is returned.
+        """
         conv_id = self._get_conversation_id_from_draft_variable(workflow.app_id)
 
         if conv_id is not None:
@@ -237,6 +311,10 @@ class WorkflowDraftVariableService:
 
         self._session.add(conversation)
         self._session.flush()
+        return conversation.id
+
+    def prefill_conversation_variable_default_values(self, workflow: Workflow):
+        """"""
         draft_conv_vars: list[WorkflowDraftVariable] = []
         for conv_var in workflow.conversation_variables:
             draft_var = WorkflowDraftVariable.new_conversation_variable(
@@ -246,14 +324,25 @@ class WorkflowDraftVariableService:
                 description=conv_var.description,
             )
             draft_conv_vars.append(draft_var)
+        _batch_upsert_draft_varaible(
+            self._session,
+            draft_conv_vars,
+            policy=_UpsertPolicy.IGNORE,
+        )
 
-        _batch_upsert_draft_varaible(self._session, draft_conv_vars)
-        return conversation.id
+
+class _UpsertPolicy(StrEnum):
+    IGNORE = "ignore"
+    OVERWRITE = "overwrite"
 
 
-def _batch_upsert_draft_varaible(session: Session, draft_vars: Sequence[WorkflowDraftVariable]):
+def _batch_upsert_draft_varaible(
+    session: Session,
+    draft_vars: Sequence[WorkflowDraftVariable],
+    policy: _UpsertPolicy = _UpsertPolicy.OVERWRITE,
+) -> None:
     if not draft_vars:
-        return
+        return None
     # Although we could use SQLAlchemy ORM operations here, we choose not to for several reasons:
     #
     # 1. The variable saving process involves writing multiple rows to the
@@ -274,18 +363,23 @@ def _batch_upsert_draft_varaible(session: Session, draft_vars: Sequence[Workflow
     # For these reasons, we use the SQLAlchemy query builder and rely on dialect-specific
     # insert operations instead of the ORM layer.
     stmt = insert(WorkflowDraftVariable).values([_model_to_insertion_dict(v) for v in draft_vars])
-    stmt = stmt.on_conflict_do_update(
-        index_elements=WorkflowDraftVariable.unique_app_id_node_id_name(),
-        set_={
-            "updated_at": stmt.excluded.updated_at,
-            "last_edited_at": stmt.excluded.last_edited_at,
-            "description": stmt.excluded.description,
-            "value_type": stmt.excluded.value_type,
-            "value": stmt.excluded.value,
-            "visible": stmt.excluded.visible,
-            "editable": stmt.excluded.editable,
-        },
-    )
+    if policy == _UpsertPolicy.OVERWRITE:
+        stmt = stmt.on_conflict_do_update(
+            index_elements=WorkflowDraftVariable.unique_app_id_node_id_name(),
+            set_={
+                "updated_at": stmt.excluded.updated_at,
+                "last_edited_at": stmt.excluded.last_edited_at,
+                "description": stmt.excluded.description,
+                "value_type": stmt.excluded.value_type,
+                "value": stmt.excluded.value,
+                "visible": stmt.excluded.visible,
+                "editable": stmt.excluded.editable,
+            },
+        )
+    elif _UpsertPolicy.IGNORE:
+        stmt = stmt.on_conflict_do_nothing(index_elements=WorkflowDraftVariable.unique_app_id_node_id_name())
+    else:
+        raise Exception("Invalid value for update policy.")
     session.execute(stmt)
 
 
@@ -345,9 +439,6 @@ class DraftVariableSaver:
     # `None`.
     _enclosing_node_id: str | None
 
-    # pending variables to save.
-    _draft_vars: list[WorkflowDraftVariable]
-
     def __init__(
         self,
         session: Session,
@@ -373,13 +464,11 @@ class DraftVariableSaver:
             return False
         return True
 
-    def _build_from_variable_assigner_mapping(self, output: Mapping[str, Any]) -> list[WorkflowDraftVariable]:
+    def _build_from_variable_assigner_mapping(self, process_data: Mapping[str, Any]) -> list[WorkflowDraftVariable]:
         draft_vars: list[WorkflowDraftVariable] = []
-        updated_variables = output.get("updated_variables", [])
+        updated_variables = get_updated_variables(process_data) or []
         for item in updated_variables:
-            selector = item.get("selector")
-            if selector is None:
-                continue
+            selector = item.selector
             if len(selector) < MIN_SELECTORS_LENGTH:
                 raise Exception("selector too short")
             # NOTE(QuantumGhost): only the following two kinds of variable could be updated by
@@ -387,21 +476,11 @@ class DraftVariableSaver:
             # We only save conversation variable here.
             if selector[0] != CONVERSATION_VARIABLE_NODE_ID:
                 continue
-            name = item.get("name")
-            if name is None:
-                continue
-            new_value = item["new_value"]
-            value_type = item.get("type")
-            if value_type is None:
-                continue
-            var_seg = variable_factory.build_segment(new_value)
-            if var_seg.value_type != value_type:
-                raise Exception("value_type mismatch!")
             draft_vars.append(
                 WorkflowDraftVariable.new_conversation_variable(
                     app_id=self._app_id,
-                    name=name,
-                    value=var_seg,
+                    name=item.name,
+                    value=item.new_value,
                 )
             )
         return draft_vars
@@ -469,14 +548,16 @@ class DraftVariableSaver:
             )
         return draft_vars
 
-    def save(self, output: Mapping[str, Any] | None):
+    def save(self, output: Mapping[str, Any] | None, process_data: Mapping[str, Any] | None = None):
         draft_vars: list[WorkflowDraftVariable] = []
         if output is None:
             output = {}
+        if process_data is None:
+            process_data = {}
         if not self._should_save_output_variables_for_draft():
             return
         if self._node_type == NodeType.VARIABLE_ASSIGNER:
-            draft_vars = self._build_from_variable_assigner_mapping(output)
+            draft_vars = self._build_from_variable_assigner_mapping(process_data=process_data)
         elif self._node_type == NodeType.START:
             draft_vars = self._build_variables_from_start_mapping(output)
         elif self._node_type == NodeType.LOOP:
@@ -497,7 +578,7 @@ class DraftVariableSaver:
 
     @staticmethod
     def _should_variable_be_visible(node_id: str, node_type: NodeType, name: str) -> bool:
-        if node_type in (NodeType.IF_ELSE, NodeType.START):
+        if node_type in NodeType.IF_ELSE:
             return False
         if node_id == SYSTEM_VARIABLE_NODE_ID and not is_system_variable_editable(name):
             return False
