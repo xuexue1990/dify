@@ -144,7 +144,7 @@ class AgentChatAppRunner(AppRunner):
             prompt_template_entity=app_config.prompt_template,
             inputs=dict(inputs),
             files=list(files),
-            query=query or "",
+            query=query,
             memory=memory,
         )
 
@@ -172,7 +172,7 @@ class AgentChatAppRunner(AppRunner):
             prompt_template_entity=app_config.prompt_template,
             inputs=dict(inputs),
             files=list(files),
-            query=query or "",
+            query=query,
             memory=memory,
         )
 
@@ -236,4 +236,7 @@ class AgentChatAppRunner(AppRunner):
             queue_manager=queue_manager,
             stream=application_generate_entity.stream,
             agent=True,
+            message_id=message.id,
+            user_id=application_generate_entity.user_id,
+            tenant_id=app_config.tenant_id,
         )

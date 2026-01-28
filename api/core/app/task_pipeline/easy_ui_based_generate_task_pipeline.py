@@ -39,6 +39,7 @@ from core.app.entities.task_entities import (
     MessageAudioEndStreamResponse,
     MessageAudioStreamResponse,
     MessageEndStreamResponse,
+    StreamEvent,
     StreamResponse,
 )
 from core.app.task_pipeline.based_generate_task_pipeline import BasedGenerateTaskPipeline
@@ -70,6 +71,7 @@ class EasyUIBasedGenerateTaskPipeline(BasedGenerateTaskPipeline):
 
     _task_state: EasyUITaskState
     _application_generate_entity: Union[ChatAppGenerateEntity, CompletionAppGenerateEntity, AgentChatAppGenerateEntity]
+    _precomputed_event_type: StreamEvent | None = None
 
     def __init__(
         self,
@@ -121,7 +123,7 @@ class EasyUIBasedGenerateTaskPipeline(BasedGenerateTaskPipeline):
         if self._application_generate_entity.app_config.app_mode != AppMode.COMPLETION:
             # start generate conversation name thread
             self._conversation_name_generate_thread = self._message_cycle_manager.generate_conversation_name(
-                conversation_id=self._conversation_id, query=self._application_generate_entity.query or ""
+                conversation_id=self._conversation_id, query=self._application_generate_entity.query
             )
 
         generator = self._wrapper_process_stream_response(trace_manager=self._application_generate_entity.trace_manager)
@@ -342,9 +344,15 @@ class EasyUIBasedGenerateTaskPipeline(BasedGenerateTaskPipeline):
                 self._task_state.llm_result.message.content = current_content
 
                 if isinstance(event, QueueLLMChunkEvent):
+                    # Determine the event type once, on first LLM chunk, and reuse for subsequent chunks
+                    if not hasattr(self, "_precomputed_event_type") or self._precomputed_event_type is None:
+                        self._precomputed_event_type = self._message_cycle_manager.get_message_event_type(
+                            message_id=self._message_id
+                        )
                     yield self._message_cycle_manager.message_to_stream_response(
                         answer=cast(str, delta_text),
                         message_id=self._message_id,
+                        event_type=self._precomputed_event_type,
                     )
                 else:
                     yield self._agent_message_to_stream_response(
@@ -360,7 +368,7 @@ class EasyUIBasedGenerateTaskPipeline(BasedGenerateTaskPipeline):
         if publisher:
             publisher.publish(None)
         if self._conversation_name_generate_thread:
-            self._conversation_name_generate_thread.join()
+            logger.debug("Conversation name generation running as daemon thread")
 
     def _save_message(self, *, session: Session, trace_manager: TraceQueueManager | None = None):
         """
